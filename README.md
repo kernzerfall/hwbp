@@ -3,6 +3,11 @@
 Credential Manager passkey provider for Android 16+ (API 36). Keys are generated in StrongBox,
 never leave it unencrypted, and **can NOT be synced or backed up**. See [Why](#why).
 
+> ⚠️ **Warning:**
+> This project currently qualifies as vibe-coded and has not been reviewed or audited.
+> Don't use it as the only passkey for an account you care about. A signed release may follow
+> only after I've reviewed the code manually. This warning will be removed then.
+
 - `app/`: Kotlin. Provider service, Keystore, BiometricPrompt, UI.
 - `rust/`: WebAuthn encoding, attestation policy, signature checks. Never sees private keys.
 - `proto/hwbp/v1/core.proto`: the interface between them. One JNI call,
