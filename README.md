@@ -110,3 +110,5 @@ external security keys already have this property. HWBP gives it to passkeys sto
 ## License
 
 Licensed under the [EUPL-1.2](LICENSE).
+
+Third-party notices are generated at build time and viewable in the app (top-right button).

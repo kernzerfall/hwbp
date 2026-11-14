@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: EUPL-1.2
 
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URI
+import java.util.Properties
 import javax.inject.Inject
 
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.protobuf)
+    alias(libs.plugins.aboutlibraries)
 }
 
 val rustAbis = listOf("arm64-v8a", "x86_64")
@@ -206,6 +209,112 @@ abstract class CargoAbout @Inject constructor(private val exec: ExecOperations) 
     }
 }
 
+/**
+ * Renders the AboutLibraries export to licenses/android.html. Libraries are grouped by
+ * license. For groups listed in app/license-overrides.properties, the project's own license
+ * text (needed where it carries the project's copyright line, e.g. BSD) is fetched from the
+ * given URL on every build instead of using the generic SPDX text. If the fetch fails, the
+ * page says so and the build warns.
+ */
+abstract class AndroidLicensesHtml : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val definitions: RegularFileProperty
+
+    /** Lines of `<maven group>=<library version> <license URL>`. */
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val overrides: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    init {
+        // Re-fetch override texts on every build.
+        outputs.upToDateWhen { false }
+    }
+
+    private fun fetch(url: String): String? = try {
+        val conn = URI(url).toURL().openConnection() as HttpURLConnection
+        conn.connectTimeout = 15_000
+        conn.readTimeout = 30_000
+        try {
+            if (conn.responseCode == 200) conn.inputStream.use { String(it.readBytes()) }.takeIf { it.isNotBlank() } else null
+        } finally {
+            conn.disconnect()
+        }
+    } catch (e: IOException) {
+        null
+    }
+
+    private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+
+    @TaskAction
+    @Suppress("UNCHECKED_CAST")
+    fun render() {
+        val json = groovy.json.JsonSlurper().parse(definitions.get().asFile) as Map<String, Any?>
+        val libraries = json["libraries"] as List<Map<String, Any?>>
+        val licenses = json["licenses"] as Map<String, Map<String, Any?>>
+        val props = Properties().apply { overrides.get().asFile.reader().use(::load) }
+        val overrideTexts = props.stringPropertyNames().associateWith { group ->
+            val (pinnedVersion, url) = props.getProperty(group).trim().split(Regex("\\s+"), limit = 2)
+                .takeIf { it.size == 2 } ?: throw GradleException("license-overrides: '$group' needs '<version> <url>'")
+            libraries.filter { (it["uniqueId"] as String).substringBefore(':') == group }
+                .mapNotNull { it["artifactVersion"] as? String }.toSet()
+                .filter { it != pinnedVersion }
+                .forEach { logger.warn("license-overrides: $group is at $it but the license URL is pinned for $pinnedVersion") }
+            fetch(url) ?: "failed to fetch $url".also { logger.warn("license-overrides: $it") }
+        }
+
+        // section key -> (title, text, libraries)
+        data class Section(val title: String, val text: String, val libs: MutableList<Map<String, Any?>> = mutableListOf())
+        val sections = linkedMapOf<String, Section>()
+        for (lib in libraries.sortedBy { (it["name"] as? String ?: it["uniqueId"] as String).lowercase() }) {
+            val group = (lib["uniqueId"] as String).substringBefore(':')
+            for (id in lib["licenses"] as List<String>) {
+                val lic = licenses[id] ?: throw GradleException("no license text for $id")
+                val override = overrideTexts[group]
+                val key = if (override != null) "$id/$group" else id
+                val title = (lic["name"] as? String ?: id) + if (override != null) " ($group)" else ""
+                val text = override ?: (lic["content"] as? String)?.takeIf { it.isNotBlank() }
+                    ?: throw GradleException("license $id has no text; check offlineMode/network")
+                sections.getOrPut(key) { Section(title, text) }.libs += lib
+            }
+        }
+
+        val html = buildString {
+            append("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n")
+            append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+            append("<title>Third-party licenses (Android)</title>\n<style>\n")
+            append("  body { font-family: sans-serif; margin: 16px; }\n")
+            append("  pre { white-space: pre-wrap; font-size: 12px; background: #f4f4f4; padding: 8px; }\n")
+            append("  @media (prefers-color-scheme: dark) { body { background: #111; color: #ddd; } pre { background: #222; } a { color: #8cf; } }\n")
+            append("</style>\n</head>\n<body>\n<h1>Third-party licenses (Android)</h1>\n")
+            append("<p>Android and Kotlin libraries bundled in the app.</p>\n<ul>\n")
+            sections.entries.forEachIndexed { i, (_, sec) ->
+                append("  <li><a href=\"#l$i\">${esc(sec.title)}</a> (${sec.libs.size})</li>\n")
+            }
+            append("</ul>\n")
+            sections.entries.forEachIndexed { i, (_, sec) ->
+                append("<h2 id=\"l$i\">${esc(sec.title)}</h2>\n<ul>\n")
+                for (lib in sec.libs) {
+                    val name = lib["name"] as? String ?: lib["uniqueId"] as String
+                    val url = (lib["website"] as? String) ?: ((lib["scm"] as? Map<String, Any?>)?.get("url") as? String)
+                    val label = esc("$name ${lib["artifactVersion"] ?: ""}".trim())
+                    append(if (url != null) "  <li><a href=\"${esc(url)}\">$label</a> <small>${esc(lib["uniqueId"] as String)}</small></li>\n"
+                           else "  <li>$label <small>${esc(lib["uniqueId"] as String)}</small></li>\n")
+                }
+                append("</ul>\n<pre>${esc(sec.text)}</pre>\n")
+            }
+            append("</body>\n</html>\n")
+        }
+        val out = outputDir.get().asFile.resolve("licenses")
+        out.deleteRecursively()
+        out.mkdirs()
+        out.resolve("android.html").writeText(html)
+    }
+}
+
 // -Phwbp.verifyChain=false builds without attestation chain verification, for
 // devices whose attestation root is not pinned in rust/data/roots.
 val verifyChainEnabled = providers.gradleProperty("hwbp.verifyChain").map { it.toBoolean() }.orElse(true)
@@ -214,6 +323,33 @@ val localRevocationStatus: File? = providers.gradleProperty("hwbp.revocationStat
 val fetchRevocationStatus = tasks.register<FetchRevocationStatus>("fetchRevocationStatus") {
     url.set("https://android.googleapis.com/attestation/status")
     output.set(layout.buildDirectory.file("attestation/status.json"))
+}
+
+// Android/Kotlin library metadata + license texts (AboutLibraries), rendered to
+// licenses/android.html by androidLicensesHtml below.
+aboutLibraries {
+    // Pulls SPDX license texts; builds already need network for the revocation list.
+    offlineMode = false
+    collect {
+        filterVariants.add("release")
+        includePlatform = false // BOMs ship no code
+    }
+    export {
+        outputFile = layout.buildDirectory.file("generated/aboutLibraries/aboutlibraries.json").get().asFile
+        variant = "release"
+    }
+    license {
+        // Fail the build if a dependency under any other license appears.
+        strictMode = com.mikepenz.aboutlibraries.plugin.StrictMode.FAIL
+        allowedLicenses.addAll("Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "MIT")
+    }
+}
+
+val androidLicensesHtml = tasks.register<AndroidLicensesHtml>("androidLicensesHtml") {
+    dependsOn("exportLibraryDefinitions")
+    definitions.set(layout.buildDirectory.file("generated/aboutLibraries/aboutlibraries.json"))
+    overrides.set(layout.projectDirectory.file("license-overrides.properties"))
+    outputDir.set(layout.buildDirectory.dir("generated/androidLicenses"))
 }
 
 val cargoAbout = tasks.register<CargoAbout>("cargoAbout") {
@@ -228,6 +364,7 @@ val cargoAbout = tasks.register<CargoAbout>("cargoAbout") {
 androidComponents {
     onVariants { variant ->
         variant.sources.assets?.addGeneratedSourceDirectory(cargoAbout, CargoAbout::outputDir)
+        variant.sources.assets?.addGeneratedSourceDirectory(androidLicensesHtml, AndroidLicensesHtml::outputDir)
         val crate = rootProject.layout.projectDirectory.dir("rust")
         val task = tasks.register<CargoNdkBuild>("cargoNdk${variant.name.replaceFirstChar(Char::titlecase)}") {
             crateDir.set(crate)
