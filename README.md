@@ -1,7 +1,7 @@
 # HWBP
 
 Credential Manager passkey provider for Android 16+ (API 36). Keys are generated in StrongBox,
-never leave it, and are never synced or backed up.
+never leave it unencrypted, and **can NOT be synced or backed up**. See [Why](#why).
 
 - `app/`: Kotlin. Provider service, Keystore, BiometricPrompt, UI.
 - `rust/`: WebAuthn encoding, attestation policy, signature checks. Never sees private keys.
@@ -101,7 +101,6 @@ Yet device binding was half the point of passkeys: a credential that can't be co
 social-engineered out of someone, because using it requires the physical hardware it lives on.
 That is how an EMV bank card, a SIM card or a European eID card (eIDAS) works. Passkeys on YubiKeys and other
 external security keys already have this property. HWBP gives it to passkeys stored on the phone.
-
 
 ## License
 
