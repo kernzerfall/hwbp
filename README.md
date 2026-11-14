@@ -8,9 +8,9 @@ never leave it unencrypted, and **can NOT be synced or backed up**. See [Why](#w
 > Don't use it as the only passkey for an account you care about. A signed release may follow
 > only after I've reviewed the code manually. This warning will be removed then.
 
-- `app/`: Kotlin. Provider service, Keystore, BiometricPrompt, UI.
-- `rust/`: WebAuthn encoding, attestation policy, signature checks. Never sees private keys.
-- `proto/hwbp/v1/core.proto`: the interface between them. One JNI call,
+- [`app/`](app/): Kotlin. Provider service, Keystore, BiometricPrompt, UI.
+- [`rust/`](rust/): WebAuthn encoding, attestation policy, signature checks. Never sees private keys.
+- [`proto/hwbp/v1/core.proto`](proto/hwbp/v1/core.proto): the interface between them. One JNI call,
   `NativeCore.invoke(Request): Response`. WebAuthn JSON stays JSON inside the messages.
 
 ## Guarantees
@@ -19,7 +19,7 @@ never leave it unencrypted, and **can NOT be synced or backed up**. See [Why](#w
 - The attestation challenge is the `clientDataHash`. The leaf must attest StrongBox (attestation
   and KeyMint level), `origin = GENERATED`, P-256 `SIGN`-only, and hardware-enforced per-use
   user auth.
-- The chain must verify to a pinned Google root (`rust/data/roots`), contain no revoked serial,
+- The chain must verify to a pinned Google root ([`rust/data/roots`](rust/data/roots)), contain no revoked serial,
   have CA issuers only, and carry the attestation extension in the leaf only.
 - Every signature needs its own BiometricPrompt, on an unlocked device, and is verified against
   the attested key before a response is returned.
@@ -29,7 +29,7 @@ never leave it unencrypted, and **can NOT be synced or backed up**. See [Why](#w
   No `INTERNET` permission.
 - All credentials are discoverable. Re-registering the same RP + user handle replaces the old one.
 
-AAGUID: `81ba41af-6f45-49e5-92fd-2b88324adbc2`, in `rust/src/webauthn.rs`.
+AAGUID: `81ba41af-6f45-49e5-92fd-2b88324adbc2`, in [`rust/src/webauthn.rs`](rust/src/webauthn.rs).
 
 ## Key storage
 
@@ -80,13 +80,13 @@ Each build downloads and embeds Google's attestation revocation list, and fails 
 Enable the provider via **Enable provider** in the app. **Run self-test** checks a throwaway
 StrongBox key against the full policy; debug builds log its chain under `HwbpSelfTest`.
 
-R8 keep rules (`app/proguard-rules.pro`) preserve the JNI entry point and protobuf-lite fields.
+R8 keep rules ([`app/proguard-rules.pro`](app/proguard-rules.pro)) preserve the JNI entry point and protobuf-lite fields.
 
 ## Limitations
 
 - No Digital Asset Links check for native-app callers. RPs must verify the
   `android:apk-key-hash:` origin.
-- The privileged-browser allowlist (`assets/privileged_browsers.json`) and the revocation list
+- The privileged-browser allowlist ([`privileged_browsers.json`](app/src/main/assets/privileged_browsers.json)) and the revocation list
   are only as fresh as their last update.
 - Certificate validity periods are not checked.
 - Doesn't protect against a compromised OS misusing a genuine StrongBox key.
