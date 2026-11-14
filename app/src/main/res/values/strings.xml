@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: EUPL-1.2 -->
+<resources>
+    <string name="app_name">HWBP</string>
+    <string name="create_entry_title">This device (StrongBox)</string>
+    <string name="create_entry_description">Hardware-bound passkey. Cannot be backed up, synced or copied.</string>
+</resources>

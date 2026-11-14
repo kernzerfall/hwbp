@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: EUPL-1.2 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Only meaningful on devices with a discrete secure element exposed as StrongBox. -->
+    <uses-feature
+        android:name="android.hardware.strongbox_keystore"
+        android:required="true" />
+
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
+    <!--
+      Deliberately NO INTERNET permission: nothing in this app can talk to the network.
+
+      allowBackup=false disables cloud backup / adb backup; dataExtractionRules also
+      exclude everything from device-to-device transfer (which allowBackup alone does
+      not cover on API 31+). Passkey private keys live in StrongBox and are never
+      exportable regardless; metadata lives in noBackupFilesDir as a third layer.
+    -->
+    <application
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.HWBP">
+
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".provider.CreatePasskeyActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@style/Theme.HWBP.Translucent" />
+
+        <activity
+            android:name=".provider.GetPasskeyActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@style/Theme.HWBP.Translucent" />
+
+        <service
+            android:name=".provider.HwbpCredentialProviderService"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_CREDENTIAL_PROVIDER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.credentials.CredentialProviderService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.credentials.provider"
+                android:resource="@xml/provider" />
+        </service>
+    </application>
+</manifest>

@@ -1,0 +1,47 @@
+[package]
+name = "hwbp-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "EUPL-1.2"
+description = "WebAuthn payload construction and StrongBox attestation verification for HWBP"
+
+[lib]
+name = "hwbp_core"
+# cdylib for Android (loaded via System.loadLibrary), rlib so host tests can link it.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+jni = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ciborium = "0.2"
+sha2 = "0.11"
+base64 = "0.23"
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "std"] }
+getrandom = "0.4"
+thiserror = "2"
+prost = "0.14"
+# Chain verification (feature `chain-verification`)
+p384 = { version = "0.14", default-features = false, features = ["ecdsa", "std"], optional = true }
+rsa = { version = "0.10", default-features = false, features = ["std", "encoding", "pkcs1v15"], optional = true }
+
+[build-dependencies]
+serde_json = "1"
+prost-build = "0.14"
+# Pure-Rust .proto compiler, so building doesn't need a system protoc.
+protox = "0.10"
+
+[features]
+default = ["chain-verification"]
+# Verify attestation chains against the pinned roots in data/roots and the
+# revocation snapshot. Disable (--no-default-features, or Gradle
+# -Phwbp.verifyChain=false) for devices whose roots aren't pinned.
+chain-verification = ["dep:p384", "dep:rsa"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "unwind" # jni's with_env catches panics; keep unwinding so they become Java exceptions
+strip = "symbols"

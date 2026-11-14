@@ -1,0 +1,216 @@
+// SPDX-License-Identifier: EUPL-1.2
+
+// Messages exchanged over NativeCore.invoke(byte[]): byte[].
+// Kotlin sends a Request and receives a Response.
+//
+// WebAuthn JSON (the RP's request and the response returned to Credential
+// Manager) stays JSON inside string fields: that format is fixed by the platform.
+
+syntax = "proto3";
+
+package hwbp.v1;
+
+option java_package = "k3r.hwbp.proto";
+option java_multiple_files = true;
+
+message Request {
+  oneof op {
+    VersionRequest version = 1;
+    RegistrationBeginRequest registration_begin = 2;
+    RegistrationAuthDataRequest registration_auth_data = 3;
+    RegistrationFinishRequest registration_finish = 4;
+    AssertionInspectRequest assertion_inspect = 5;
+    AssertionBeginRequest assertion_begin = 6;
+    AssertionAuthDataRequest assertion_auth_data = 7;
+    AssertionFinishRequest assertion_finish = 8;
+    AttestationVerifyRequest attestation_verify = 9;
+  }
+}
+
+message Response {
+  oneof result {
+    Error error = 1;
+    VersionResponse version = 2;
+    RegistrationPlan registration_plan = 3;
+    ToSign to_sign = 4;
+    RegistrationFinishResponse registration_finish = 5;
+    AssertionSummary assertion_summary = 6;
+    AssertionPlan assertion_plan = 7;
+    AssertionFinishResponse assertion_finish = 8;
+    AttestationReport attestation_report = 9;
+  }
+}
+
+// Mirrors the WebAuthn DOMException names the Kotlin side maps onto
+// Credential Manager exceptions.
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_DATA = 1;
+  ERROR_CODE_NOT_SUPPORTED = 2;
+  ERROR_CODE_INVALID_STATE = 3;
+  ERROR_CODE_NOT_ALLOWED = 4;
+  ERROR_CODE_SECURITY = 5;
+}
+
+message Error {
+  ErrorCode code = 1;
+  string message = 2;
+}
+
+// --- version -----------------------------------------------------------------
+
+message VersionRequest {}
+
+message VersionResponse {
+  string crate_version = 1;
+  bytes aaguid = 2;
+  ChainVerification chain_verification = 3;
+}
+
+message ChainVerification {
+  bool enabled = 1;
+  uint32 revoked_entries = 2;
+  // mtime of the revocation list the build embedded.
+  optional uint64 revocation_snapshot_unix = 3;
+}
+
+// --- shared ------------------------------------------------------------------
+
+message Caller {
+  // "https://example.com" for privileged browsers, or
+  // "android:apk-key-hash:<b64url sha256(signing cert)>" for apps.
+  string origin = 1;
+  // Package name of a native calling app (unset for browsers).
+  optional string package_name = 2;
+  // Set only by privileged browsers, which build clientDataJSON themselves.
+  optional bytes client_data_hash = 3;
+}
+
+message ClientData {
+  // clientDataJSON, if HWBP built it (unset when a browser supplied the hash).
+  optional string json = 1;
+  bytes hash = 2;
+}
+
+message ToSign {
+  bytes authenticator_data = 1;
+  // authenticatorData || clientDataHash
+  bytes to_be_signed = 2;
+  // Registration only.
+  optional AttestationReport attestation = 3;
+}
+
+// --- registration ------------------------------------------------------------
+
+message RegistrationBeginRequest {
+  string request_json = 1;
+  Caller caller = 2;
+  // Matched against excludeCredentials.
+  repeated bytes existing_credential_ids = 3;
+}
+
+// Opaque state; pass back unchanged to the later registration steps.
+message RegistrationPlan {
+  string rp_id = 1;
+  bytes user_id = 2;
+  string user_name = 3;
+  string user_display_name = 4;
+  bytes credential_id = 5;
+  ClientData client_data = 6;
+  AttestationFormat attestation_format = 7;
+}
+
+enum AttestationFormat {
+  ATTESTATION_FORMAT_UNSPECIFIED = 0;
+  ATTESTATION_FORMAT_NONE = 1;
+  ATTESTATION_FORMAT_ANDROID_KEY = 2;
+}
+
+message RegistrationAuthDataRequest {
+  RegistrationPlan plan = 1;
+  // Keystore attestation chain, leaf first.
+  repeated bytes x5c = 2;
+}
+
+message RegistrationFinishRequest {
+  RegistrationPlan plan = 1;
+  bytes authenticator_data = 2;
+  // DER ECDSA signature from StrongBox.
+  bytes signature = 3;
+  repeated bytes x5c = 4;
+}
+
+message RegistrationFinishResponse {
+  string response_json = 1;
+  bytes public_key_spki = 2;
+}
+
+// --- assertion ---------------------------------------------------------------
+
+message AssertionInspectRequest {
+  string request_json = 1;
+}
+
+message AssertionSummary {
+  optional string rp_id = 1;
+  repeated bytes allow_credentials = 2;
+}
+
+message AssertionBeginRequest {
+  string request_json = 1;
+  Caller caller = 2;
+  bytes credential_id = 3;
+  // RP ID the chosen credential was registered for.
+  string credential_rp_id = 4;
+}
+
+// Opaque state; pass back unchanged to the later assertion steps.
+message AssertionPlan {
+  string rp_id = 1;
+  ClientData client_data = 2;
+  bytes credential_id = 3;
+}
+
+message AssertionAuthDataRequest {
+  AssertionPlan plan = 1;
+  uint32 sign_count = 2;
+}
+
+message AssertionFinishRequest {
+  AssertionPlan plan = 1;
+  bytes authenticator_data = 2;
+  bytes signature = 3;
+  bytes user_handle = 4;
+  bytes public_key_spki = 5;
+}
+
+message AssertionFinishResponse {
+  string response_json = 1;
+}
+
+// --- attestation -------------------------------------------------------------
+
+message AttestationVerifyRequest {
+  repeated bytes x5c = 1;
+  bytes challenge = 2;
+}
+
+// Security levels and boot state use the raw KeyMint/ASN.1 values:
+//   security level: 0 Software, 1 TrustedEnvironment, 2 StrongBox
+//   boot state:     0 Verified, 1 SelfSigned, 2 Unverified, 3 Failed
+message AttestationReport {
+  uint32 attestation_version = 1;
+  uint32 attestation_security_level = 2;
+  uint32 key_mint_version = 3;
+  uint32 key_mint_security_level = 4;
+  optional uint32 verified_boot_state = 5;
+  optional bool device_locked = 6;
+  // Set when the chain was verified to a pinned root.
+  optional ChainSummary chain = 7;
+}
+
+message ChainSummary {
+  // File stem of the pinned root, e.g. "google-p384-ca1".
+  string root = 1;
+  uint32 length = 2;
+}
