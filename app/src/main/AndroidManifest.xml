@@ -35,6 +35,10 @@
         </activity>
 
         <activity
+            android:name=".ui.LicensesActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".provider.CreatePasskeyActivity"
             android:excludeFromRecents="true"
             android:exported="false"
