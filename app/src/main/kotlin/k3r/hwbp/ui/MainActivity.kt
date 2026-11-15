@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -52,6 +53,8 @@ import k3r.hwbp.core.Core
 import k3r.hwbp.keystore.StrongBoxKeys
 import k3r.hwbp.proto.AttestationReport
 import k3r.hwbp.store.CredentialStore
+import k3r.hwbp.store.CredentialStoreException
+import k3r.hwbp.store.DamagedEntry
 import k3r.hwbp.store.PasskeyRecord
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -85,15 +88,29 @@ private fun HwbpScreen() {
     var passkeys by remember { mutableStateOf(emptyList<PasskeyRecord>()) }
     var selfTest by remember { mutableStateOf<SelfTest>(SelfTest.Idle) }
     var pendingDelete by remember { mutableStateOf<PasskeyRecord?>(null) }
+    var storeError by remember { mutableStateOf(false) }
+    var damaged by remember { mutableStateOf(emptyList<DamagedEntry>()) }
+    var pendingDamaged by remember { mutableStateOf<DamagedEntry?>(null) }
+    var confirmReset by remember { mutableStateOf(false) }
     val strongBox = remember { StrongBoxKeys.isAvailable(ctx) }
     val chainInfo = remember { Core.version().chainVerification }
     val debuggable = remember { ctx.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0 }
 
     fun reload() = scope.launch {
-        passkeys = withContext(Dispatchers.IO) {
-            store.pruneOrphans()
-            store.sweepOrphanKeys()
-            store.all().sortedByDescending { it.createdAt }
+        try {
+            val c = withContext(Dispatchers.IO) {
+                store.pruneOrphans()
+                store.sweepOrphanKeys()
+                store.contents()
+            }
+            passkeys = c.records.sortedByDescending { it.createdAt }
+            damaged = c.damaged
+            storeError = false
+        } catch (e: CredentialStoreException) {
+            Log.e("Hwbp", "passkey store unreadable", e)
+            passkeys = emptyList()
+            damaged = emptyList()
+            storeError = true
         }
     }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { reload() }
@@ -187,6 +204,21 @@ private fun HwbpScreen() {
                 )
             }
 
+            if (storeError) {
+                item {
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                "The passkey list (passkeys.json) is corrupt. HWBP won't create, use, delete " +
+                                    "or clean up passkeys until it's reset. The keys in StrongBox are untouched.",
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            Button(onClick = { confirmReset = true }) { Text("Reset passkey list") }
+                        }
+                    }
+                }
+            }
+
             items(passkeys, key = { it.credentialId }) { pk ->
                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.outlinedCardColors()) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -202,6 +234,50 @@ private fun HwbpScreen() {
                         }
                         Spacer(Modifier.width(8.dp))
                         TextButton(onClick = { pendingDelete = pk }) { Text("Delete") }
+                    }
+                }
+            }
+
+            if (damaged.isNotEmpty()) {
+                item {
+                    Text(
+                        "Unusable entries (${damaged.size})",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                    Text(
+                        "Their metadata is damaged or lost, so they can't sign in. Their keys are kept " +
+                            "until you destroy them." +
+                            if (damaged.any { it.credentialId == null }) {
+                                " Cleanup of leftover keys is paused while an entry without a credential ID exists."
+                            } else {
+                                ""
+                            },
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                itemsIndexed(damaged, key = { i, _ -> "damaged:$i" }) { _, d ->
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.outlinedCardColors()) {
+                        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    if (d.recovered) "Key without metadata" else "Damaged entry",
+                                    style = MaterialTheme.typography.titleSmall,
+                                )
+                                Text(
+                                    d.credentialId?.let { "Credential ${it.take(12)}…" } ?: "Credential ID unreadable",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                )
+                                d.createdAt?.let {
+                                    Text("Created ${DateFormat.getDateInstance().format(Date(it))}", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            TextButton(onClick = { pendingDamaged = d }) {
+                                Text(if (d.credentialId != null) "Destroy" else "Remove")
+                            }
+                        }
                     }
                 }
             }
@@ -222,12 +298,75 @@ private fun HwbpScreen() {
                 TextButton(onClick = {
                     pendingDelete = null
                     scope.launch {
-                        withContext(Dispatchers.IO) { store.delete(pk.credentialId) }
+                        try {
+                            withContext(Dispatchers.IO) { store.delete(pk.credentialId) }
+                        } catch (_: CredentialStoreException) {
+                            // reload() shows the error.
+                        }
                         reload()
                     }
                 }) { Text("Destroy", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancel") } },
+        )
+    }
+
+    pendingDamaged?.let { d ->
+        AlertDialog(
+            onDismissRequest = { pendingDamaged = null },
+            title = { Text(if (d.credentialId != null) "Destroy key?" else "Remove entry?") },
+            text = {
+                Text(
+                    if (d.credentialId != null) {
+                        "The entry and its key will be erased from the secure element. Remove the passkey " +
+                            "from the account's security settings too, if you know which one it was."
+                    } else {
+                        "The entry will be removed. Its key can't be identified; once no such entries are " +
+                            "left, leftover keys without an entry are destroyed after an hour."
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingDamaged = null
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) { store.deleteDamaged(d) }
+                        } catch (_: CredentialStoreException) {
+                            // reload() shows the error.
+                        }
+                        reload()
+                    }
+                }) { Text(if (d.credentialId != null) "Destroy" else "Remove", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { pendingDamaged = null }) { Text("Cancel") } },
+        )
+    }
+
+    if (confirmReset) {
+        AlertDialog(
+            onDismissRequest = { confirmReset = false },
+            title = { Text("Reset passkey list?") },
+            text = {
+                Text(
+                    "The corrupt file is moved aside, not deleted. Every key in StrongBox is then listed as " +
+                        "\"Key without metadata\". Those passkeys can't be used again, because their site and " +
+                        "user handle were only stored in the file: register new ones and remove the old ones " +
+                        "from your accounts. No key is destroyed unless you do it yourself.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmReset = false
+                    scope.launch {
+                        runCatching { withContext(Dispatchers.IO) { store.reset() } }
+                            .onSuccess { Log.i("Hwbp", "corrupt passkey store moved to $it") }
+                            .onFailure { Log.e("Hwbp", "reset failed", it) }
+                        reload()
+                    }
+                }) { Text("Reset", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("Cancel") } },
         )
     }
 }

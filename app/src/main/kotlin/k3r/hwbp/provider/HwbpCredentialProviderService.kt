@@ -28,6 +28,7 @@ import k3r.hwbp.core.B64
 import k3r.hwbp.core.Core
 import k3r.hwbp.keystore.StrongBoxKeys
 import k3r.hwbp.store.CredentialStore
+import k3r.hwbp.store.CredentialStoreException
 
 /**
  * Credential Manager entry point. The begin* calls must be fast and must not
@@ -72,7 +73,13 @@ class HwbpCredentialProviderService : CredentialProviderService() {
             callback.onResult(BeginGetCredentialResponse())
             return
         }
-        val store = CredentialStore.get(this)
+        val records = try {
+            CredentialStore.get(this).all()
+        } catch (e: CredentialStoreException) {
+            Log.e(TAG, "not offering passkeys", e)
+            callback.onResult(BeginGetCredentialResponse())
+            return
+        }
         val entries = mutableListOf<CredentialEntry>()
 
         for (option in request.beginGetCredentialOptions.filterIsInstance<BeginGetPublicKeyCredentialOption>()) {
@@ -85,7 +92,7 @@ class HwbpCredentialProviderService : CredentialProviderService() {
             val rpId = summary.rpId.takeIf { summary.hasRpId() }
                 ?: origin.removePrefix("https://").substringBefore('/').substringBefore(':')
 
-            for (rec in store.forRp(rpId)) {
+            for (rec in records.filter { it.rpId.equals(rpId, ignoreCase = true) }) {
                 if (allowed.isNotEmpty() && rec.credentialId !in allowed) continue
                 val intent = Intent(this, GetPasskeyActivity::class.java)
                     .setPackage(packageName)

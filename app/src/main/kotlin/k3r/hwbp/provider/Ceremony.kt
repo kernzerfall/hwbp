@@ -13,6 +13,7 @@ import androidx.credentials.exceptions.domerrors.UnknownError
 import k3r.hwbp.core.CoreException
 import k3r.hwbp.keystore.StrongBoxException
 import k3r.hwbp.proto.ErrorCode
+import k3r.hwbp.store.CredentialStoreException
 
 /** Outcome of a failed ceremony, already mapped to a WebAuthn DOMException. */
 internal sealed interface Failure {
@@ -37,5 +38,6 @@ internal fun Throwable.toFailure(): Failure = when (this) {
     is StrongBoxException -> Failure.Dom(NotSupportedError(), message ?: "StrongBox unavailable")
     is KeyPermanentlyInvalidatedException -> Failure.Dom(NotAllowedError(), "this passkey's key was invalidated")
     is SecurityException -> Failure.Dom(SecurityError(), message ?: "security error")
+    is CredentialStoreException -> Failure.Dom(UnknownError(), message ?: "passkey store unreadable")
     else -> Failure.Dom(UnknownError(), "${javaClass.simpleName}: $message")
 }

@@ -10,6 +10,7 @@ import k3r.hwbp.proto.AttestationReport
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
 
 /**
  * Non-secret passkey metadata. The private key itself never leaves StrongBox;
@@ -59,16 +60,46 @@ data class PasskeyRecord(
 }
 
 /**
+ * passkeys.json exists but isn't a readable JSON array. Never treated as "no
+ * passkeys": that would make [CredentialStore.sweepOrphanKeys] destroy every key
+ * and the next write overwrite the file. Every operation fails until the user
+ * runs [CredentialStore.reset].
+ */
+class CredentialStoreException(message: String, cause: Throwable) : Exception(message, cause)
+
+/**
+ * An entry of passkeys.json that can't be used as a passkey: either a record that
+ * failed to parse, or a stub written by [CredentialStore.reset] for a key whose
+ * metadata was lost. It is kept verbatim on every write, and its key (if
+ * [credentialId] is known) is never swept, until the user destroys it.
+ */
+class DamagedEntry internal constructor(
+    internal val raw: Any,
+    /** null if not even the credential ID could be read. */
+    val credentialId: String?,
+    val createdAt: Long?,
+    /** true for stubs written by [CredentialStore.reset]. */
+    val recovered: Boolean,
+) {
+    internal val rawText: String = raw.toString()
+}
+
+class StoreContents(val records: List<PasskeyRecord>, val damaged: List<DamagedEntry>)
+
+/**
  * Stored in [Context.getNoBackupFilesDir] so it is excluded from every backup
  * mechanism even if the manifest policy were relaxed.
+ *
+ * Entries are parsed one by one: a damaged entry doesn't take the others down
+ * (see [DamagedEntry]).
  */
-class CredentialStore private constructor(dir: File) {
-    private val file = AtomicFile(File(dir, "passkeys.json"))
+class CredentialStore private constructor(private val dir: File) {
+    private val file = AtomicFile(File(dir, FILE_NAME))
     private val lock = Any()
 
-    fun all(): List<PasskeyRecord> = synchronized(lock) { read() }
+    fun contents(): StoreContents = synchronized(lock) { read() }
 
-    fun forRp(rpId: String): List<PasskeyRecord> = all().filter { it.rpId.equals(rpId, ignoreCase = true) }
+    fun all(): List<PasskeyRecord> = contents().records
 
     fun get(credentialId: String): PasskeyRecord? = all().firstOrNull { it.credentialId == credentialId }
 
@@ -99,14 +130,63 @@ class CredentialStore private constructor(dir: File) {
     }
 
     /** Deletes the metadata *and* destroys the StrongBox key. Irreversible. */
-    fun delete(credentialId: String) {
+    fun delete(credentialId: String) = synchronized(lock) {
+        val c = read() // fail before touching the key if the store is unreadable
         StrongBoxKeys.delete(StrongBoxKeys.alias(credentialId))
-        mutate { list -> list.filterNot { it.credentialId == credentialId } }
+        write(c.records.filterNot { it.credentialId == credentialId }, c.damaged)
+    }
+
+    /**
+     * Removes a damaged entry and destroys its key, if known. Irreversible. If the
+     * entry had no readable credential ID, its key (whichever it is) becomes an
+     * orphan and [sweepOrphanKeys] destroys it later.
+     */
+    fun deleteDamaged(entry: DamagedEntry) = synchronized(lock) {
+        val c = read()
+        entry.credentialId?.let { StrongBoxKeys.delete(StrongBoxKeys.alias(it)) }
+        val i = c.damaged.indexOfFirst { it.rawText == entry.rawText }
+        if (i >= 0) write(c.records, c.damaged.filterIndexed { j, _ -> j != i })
+    }
+
+    /**
+     * Recovery from an unreadable file: moves it aside (kept for manual repair) and
+     * writes a [DamagedEntry] stub for every credential key in StrongBox, so no key
+     * is swept and each can be destroyed individually. The passkeys themselves are
+     * not usable again: RP ID and user handle are only in the lost file.
+     *
+     * @return the name of the file the corrupt store was moved to.
+     */
+    fun reset(): String = synchronized(lock) {
+        val now = System.currentTimeMillis()
+        val stubs = StrongBoxKeys.credentialKeys().map { key ->
+            val stub = JSONObject()
+                .put("credentialId", key.alias.removePrefix(StrongBoxKeys.alias("")))
+                .put("recoveredAt", now)
+            key.created?.let { stub.put("createdAt", it.time) }
+            parseDamaged(stub)
+        }
+        val aside = "$FILE_NAME.corrupt-$now"
+        val moved = ArrayList<Pair<File, File>>()
+        try {
+            for (suffix in listOf("", ".bak")) {
+                val from = File(dir, FILE_NAME + suffix)
+                val to = File(dir, aside + suffix)
+                if (!from.exists()) continue
+                if (!from.renameTo(to)) throw IOException("could not move ${from.name} aside")
+                moved += from to to
+            }
+            write(emptyList(), stubs)
+        } catch (t: Throwable) {
+            // A missing file reads as "no passkeys", which would let the sweep destroy every key.
+            moved.forEach { (from, to) -> to.renameTo(from) }
+            throw t
+        }
+        aside
     }
 
     /**
      * Drops records whose key no longer exists (e.g. the user removed the screen
-     * lock, which makes Android wipe auth-bound keys).
+     * lock, which makes Android wipe auth-bound keys). Damaged entries are kept.
      */
     fun pruneOrphans(): Int {
         var removed = 0
@@ -120,12 +200,19 @@ class CredentialStore private constructor(dir: File) {
      * The reverse of [pruneOrphans]: destroys Keystore keys that no record points
      * at, e.g. when the process was killed mid-registration after key generation.
      *
+     * Keys of damaged entries count as referenced. If any damaged entry has no
+     * readable credential ID, nothing is swept: it could belong to any key.
+     *
      * Only keys older than [minAgeMillis] are touched so that a registration in
      * progress (key generated, record not yet written) is never swept. Keys with
      * an unknown creation date are left alone.
      */
     fun sweepOrphanKeys(minAgeMillis: Long = ORPHAN_MIN_AGE_MILLIS): Int = synchronized(lock) {
-        val known = read().mapTo(HashSet()) { it.alias }
+        val c = read()
+        if (c.damaged.any { it.credentialId == null }) return 0
+        val known = HashSet<String>()
+        c.records.mapTo(known) { it.alias }
+        c.damaged.mapTo(known) { StrongBoxKeys.alias(it.credentialId!!) }
         val cutoff = System.currentTimeMillis() - minAgeMillis
         StrongBoxKeys.credentialKeys()
             .filter { it.alias !in known && (it.created?.time ?: Long.MAX_VALUE) < cutoff }
@@ -134,19 +221,50 @@ class CredentialStore private constructor(dir: File) {
     }
 
     private fun mutate(f: (List<PasskeyRecord>) -> List<PasskeyRecord>) = synchronized(lock) {
-        write(f(read()))
+        val c = read()
+        write(f(c.records), c.damaged)
     }
 
-    private fun read(): List<PasskeyRecord> {
-        if (!file.baseFile.exists()) return emptyList()
-        val arr = JSONArray(String(file.readFully(), Charsets.UTF_8))
-        return List(arr.length()) { PasskeyRecord.fromJson(arr.getJSONObject(it)) }
+    /** @throws CredentialStoreException if the file exists but isn't a readable JSON array. */
+    private fun read(): StoreContents {
+        // AtomicFile restores an interrupted write's backup; only then check for "no file".
+        if (!file.baseFile.exists() && !File(file.baseFile.path + ".bak").exists()) {
+            return StoreContents(emptyList(), emptyList())
+        }
+        val arr = try {
+            JSONArray(String(file.readFully(), Charsets.UTF_8))
+        } catch (e: Exception) {
+            throw CredentialStoreException("$FILE_NAME is unreadable or corrupt", e)
+        }
+        val records = ArrayList<PasskeyRecord>()
+        val damaged = ArrayList<DamagedEntry>()
+        for (i in 0 until arr.length()) {
+            val raw = arr.opt(i)
+            val record = (raw as? JSONObject)
+                ?.takeUnless { it.has("recoveredAt") }
+                ?.let { runCatching { PasskeyRecord.fromJson(it) }.getOrNull() }
+            if (record != null) records += record else damaged += parseDamaged(raw ?: JSONObject.NULL)
+        }
+        return StoreContents(records, damaged)
     }
 
-    private fun write(records: List<PasskeyRecord>) {
+    private fun parseDamaged(raw: Any): DamagedEntry {
+        val o = raw as? JSONObject
+        return DamagedEntry(
+            raw = raw,
+            credentialId = o?.optString("credentialId")?.takeIf { it.isNotEmpty() },
+            createdAt = o?.optLong("createdAt", -1)?.takeIf { it >= 0 },
+            recovered = o?.has("recoveredAt") == true,
+        )
+    }
+
+    private fun write(records: List<PasskeyRecord>, damaged: List<DamagedEntry>) {
+        val arr = JSONArray()
+        records.forEach { arr.put(it.toJson()) }
+        damaged.forEach { arr.put(it.raw) }
         val out = file.startWrite()
         try {
-            out.write(JSONArray(records.map { it.toJson() }).toString().toByteArray())
+            out.write(arr.toString().toByteArray())
             file.finishWrite(out)
         } catch (t: Throwable) {
             file.failWrite(out)
@@ -155,6 +273,8 @@ class CredentialStore private constructor(dir: File) {
     }
 
     companion object {
+        private const val FILE_NAME = "passkeys.json"
+
         /** No registration ceremony takes anywhere near this long. */
         const val ORPHAN_MIN_AGE_MILLIS = 60 * 60 * 1000L
 

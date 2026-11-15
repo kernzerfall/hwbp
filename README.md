@@ -56,6 +56,8 @@ sign     │ unwrap, check auth,  │ ◀── blob + data + auth token
 - Factory reset destroys the root secrets. Removing the screen lock invalidates auth-bound keys.
 - On resume, the app drops records without a key and deletes keys without a record that are
   older than 1 h.
+- Damaged entries in the passkey list are kept and their keys are never swept; they are destroyed
+  only by hand. If the whole list is unreadable, nothing runs until it is reset in the app.
 
 Lose the device, lose its passkeys. Keep a second authenticator on every account.
 

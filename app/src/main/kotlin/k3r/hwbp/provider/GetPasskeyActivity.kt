@@ -20,6 +20,7 @@ import k3r.hwbp.core.B64
 import k3r.hwbp.core.Core
 import k3r.hwbp.keystore.StrongBoxKeys
 import k3r.hwbp.store.CredentialStore
+import k3r.hwbp.store.CredentialStoreException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -39,7 +40,13 @@ class GetPasskeyActivity : ComponentActivity() {
             return
         }
         val store = CredentialStore.get(this)
-        val record = store.get(credentialId)
+        val record = try {
+            store.get(credentialId)
+        } catch (e: CredentialStoreException) {
+            Log.e(TAG, "assertion failed", e)
+            fail(GetCredentialUnknownException(e.message))
+            return
+        }
         if (record == null) {
             fail(NoCredentialException("passkey no longer exists"))
             return
