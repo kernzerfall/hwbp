@@ -232,8 +232,8 @@ private fun HwbpScreen() {
                     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
-                                "The passkey list (passkeys.json) is corrupt or from a newer version of HWBP. " +
-                                    "HWBP won't create, use, delete " +
+                                "The passkey list (passkeys.json) is corrupt, missing or from a newer version " +
+                                    "of HWBP. HWBP won't create, use, delete " +
                                     "or clean up passkeys until it's reset. The keys in StrongBox are untouched.",
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                             )
@@ -435,7 +435,7 @@ private fun HwbpScreen() {
             title = { Text("Reset passkey list?") },
             text = {
                 Text(
-                    "The corrupt file is moved aside, not deleted. Every key in StrongBox is then listed as " +
+                    "The file, if there is one, is moved aside, not deleted. Every key in StrongBox is then listed as " +
                         "\"Key without metadata\". Those passkeys can't be used again, because their site and " +
                         "user handle were only stored in the file: register new ones and remove the old ones " +
                         "from your accounts. No key is destroyed unless you do it yourself.",

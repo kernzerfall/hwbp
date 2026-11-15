@@ -62,8 +62,8 @@ data class PasskeyRecord(
 }
 
 /**
- * passkeys.json can't be used: it is unreadable or was written by a newer
- * schema version. Never treated as "no
+ * passkeys.json can't be used: it is unreadable, was written by a newer schema
+ * version, or is missing although passkey keys exist. Never treated as "no
  * passkeys": that would make [CredentialStore.sweepOrphanKeys] destroy every key
  * and the next write overwrite the file. Every operation fails until the user
  * runs [CredentialStore.reset].
@@ -155,7 +155,8 @@ class CredentialStore private constructor(private val dir: File) {
     }
 
     /**
-     * Recovery from an unusable file: moves it aside (kept for manual repair) and
+     * Recovery from an unusable file: moves it aside if it exists (kept for manual
+     * repair) and
      * writes a [DamagedEntry] stub for every credential key in StrongBox, so no key
      * is swept and each can be destroyed individually. The passkeys themselves are
      * not usable again: RP ID and user handle are only in the lost file.
@@ -179,7 +180,6 @@ class CredentialStore private constructor(private val dir: File) {
         try {
             write(emptyList(), stubs)
         } catch (t: Throwable) {
-            // A missing file reads as "no passkeys", which would let the sweep destroy every key.
             if (moved) to.renameTo(from)
             throw t
         }
@@ -235,7 +235,20 @@ class CredentialStore private constructor(private val dir: File) {
      * @throws CredentialStoreException see there.
      */
     private fun read(): StoreContents {
-        if (!file.baseFile.exists()) return StoreContents(emptyList(), emptyList())
+        if (!file.baseFile.exists()) {
+            // Either nothing was ever stored, or the file was lost. Telling them
+            // apart matters: "no passkeys" lets the sweep destroy every key.
+            val keys = try {
+                StrongBoxKeys.credentialKeys().size
+            } catch (e: Exception) {
+                throw CredentialStoreException("$FILE_NAME is missing and Keystore can't be listed", e)
+            }
+            if (keys > 0) throw CredentialStoreException("$FILE_NAME is missing but $keys passkey key(s) exist")
+            // Written now, so that from here on a missing file always means a lost one
+            // (registration reads the store before it generates its key).
+            write(emptyList(), emptyList())
+            return StoreContents(emptyList(), emptyList())
+        }
         val version: Int
         val arr: JSONArray
         try {
