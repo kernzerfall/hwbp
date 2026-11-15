@@ -166,19 +166,15 @@ class CredentialStore private constructor(private val dir: File) {
             parseDamaged(stub)
         }
         val aside = "$FILE_NAME.corrupt-$now"
-        val moved = ArrayList<Pair<File, File>>()
+        val from = file.baseFile
+        val to = File(dir, aside)
+        val moved = from.exists()
+        if (moved && !from.renameTo(to)) throw IOException("could not move ${from.name} aside")
         try {
-            for (suffix in listOf("", ".bak")) {
-                val from = File(dir, FILE_NAME + suffix)
-                val to = File(dir, aside + suffix)
-                if (!from.exists()) continue
-                if (!from.renameTo(to)) throw IOException("could not move ${from.name} aside")
-                moved += from to to
-            }
             write(emptyList(), stubs)
         } catch (t: Throwable) {
             // A missing file reads as "no passkeys", which would let the sweep destroy every key.
-            moved.forEach { (from, to) -> to.renameTo(from) }
+            if (moved) to.renameTo(from)
             throw t
         }
         aside
@@ -225,12 +221,15 @@ class CredentialStore private constructor(private val dir: File) {
         write(f(c.records), c.damaged)
     }
 
-    /** @throws CredentialStoreException if the file exists but isn't a readable JSON array. */
+    /**
+     * AtomicFile writes to `passkeys.json.new` and renames it over the file, so an
+     * interrupted write leaves the previous file intact; there is no backup file
+     * to consider.
+     *
+     * @throws CredentialStoreException if the file exists but isn't a readable JSON array.
+     */
     private fun read(): StoreContents {
-        // AtomicFile restores an interrupted write's backup; only then check for "no file".
-        if (!file.baseFile.exists() && !File(file.baseFile.path + ".bak").exists()) {
-            return StoreContents(emptyList(), emptyList())
-        }
+        if (!file.baseFile.exists()) return StoreContents(emptyList(), emptyList())
         val arr = try {
             JSONArray(String(file.readFully(), Charsets.UTF_8))
         } catch (e: Exception) {

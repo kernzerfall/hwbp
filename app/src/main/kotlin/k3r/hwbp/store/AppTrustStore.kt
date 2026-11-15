@@ -78,7 +78,7 @@ class AppTrustStore private constructor(dir: File) {
     }
 
     private fun read(): List<AppTrust> {
-        if (!file.baseFile.exists() && !File(file.baseFile.path + ".bak").exists()) return emptyList()
+        if (!file.baseFile.exists()) return emptyList()
         return try {
             val arr = JSONArray(String(file.readFully(), Charsets.UTF_8))
             (0 until arr.length()).mapNotNull { i ->
