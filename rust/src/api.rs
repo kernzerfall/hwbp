@@ -120,8 +120,6 @@ fn version() -> pb::VersionResponse {
     #[cfg(not(feature = "chain-verification"))]
     let chain = pb::ChainVerification::default();
     pb::VersionResponse {
-        crate_version: env!("CARGO_PKG_VERSION").into(),
-        aaguid: webauthn::AAGUID.to_vec(),
         chain_verification: Some(chain),
     }
 }
@@ -138,7 +136,7 @@ mod tests {
     #[test]
     fn version() {
         let Out::Version(v) = call(Op::Version(pb::VersionRequest {})) else { panic!() };
-        assert_eq!(v.aaguid, webauthn::AAGUID);
+        assert_eq!(v.chain_verification.unwrap().enabled, cfg!(feature = "chain-verification"));
     }
 
     #[test]

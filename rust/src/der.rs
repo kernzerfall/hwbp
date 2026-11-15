@@ -14,7 +14,6 @@ pub const TAG_BOOLEAN: u32 = 0x01;
 pub const TAG_INTEGER: u32 = 0x02;
 pub const TAG_BIT_STRING: u32 = 0x03;
 pub const TAG_OCTET_STRING: u32 = 0x04;
-pub const TAG_NULL: u32 = 0x05;
 pub const TAG_OID: u32 = 0x06;
 pub const TAG_ENUMERATED: u32 = 0x0a;
 pub const TAG_SEQUENCE: u32 = 0x10;

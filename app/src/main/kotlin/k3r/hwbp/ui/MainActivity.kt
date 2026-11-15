@@ -483,7 +483,7 @@ private fun HwbpScreen() {
                     confirmReset = false
                     scope.launch {
                         runCatching { withContext(Dispatchers.IO) { store.reset() } }
-                            .onSuccess { Log.i("Hwbp", "corrupt passkey store moved to $it") }
+                            .onSuccess { Log.i("Hwbp", "passkey list reset; a previous file, if any, is now $it") }
                             .onFailure { Log.e("Hwbp", "reset failed", it) }
                         reload()
                     }

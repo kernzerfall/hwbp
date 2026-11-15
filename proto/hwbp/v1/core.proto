@@ -64,8 +64,7 @@ message Error {
 message VersionRequest {}
 
 message VersionResponse {
-  string crate_version = 1;
-  bytes aaguid = 2;
+  reserved 1, 2;
   ChainVerification chain_verification = 3;
 }
 

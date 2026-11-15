@@ -98,10 +98,6 @@ object StrongBoxKeys {
     fun signatureFor(alias: String): Signature =
         Signature.getInstance("SHA256withECDSA").apply { initSign(privateKey(alias)) }
 
-    fun publicKeySpki(alias: String): ByteArray =
-        keyStore().getCertificate(alias)?.publicKey?.encoded
-            ?: throw StrongBoxException("No certificate for $alias")
-
     fun exists(alias: String): Boolean = keyStore().containsAlias(alias)
 
     /** A passkey key in Keystore, whether or not any record still points at it. */
