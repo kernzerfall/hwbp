@@ -3,6 +3,7 @@
 package k3r.hwbp.provider
 
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -42,6 +43,10 @@ class CreatePasskeyActivity : ComponentActivity() {
         if (request == null || call == null) {
             fail(CreateCredentialUnknownException("not a passkey creation request"))
             return
+        }
+
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            Log.d(TAG, "requestJson from ${request.callingAppInfo.packageName}: ${call.requestJson}")
         }
 
         lifecycleScope.launch {
@@ -100,6 +105,7 @@ class CreatePasskeyActivity : ComponentActivity() {
     }
 
     private fun succeed(responseJson: String) {
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) responseJson.chunked(3000).forEach { Log.d(TAG, "responseJson: $it") }
         val result = Intent()
         PendingIntentHandler.setCreateCredentialResponse(result, CreatePublicKeyCredentialResponse(responseJson))
         setResult(RESULT_OK, result)
