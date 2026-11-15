@@ -91,6 +91,8 @@ R8 keep rules ([`app/proguard-rules.pro`](app/proguard-rules.pro)) preserve the 
 - Certificate validity periods are not checked.
 - Doesn't protect against a compromised OS misusing a genuine StrongBox key.
 - Only the `credProps` extension. No Signal API.
+- Firefox replaces attestation with `none` unless `security.webauthn.always_allow_direct_attestation`
+  is set (`about:config`, Beta/Nightly only). Chrome passes it through.
 - No release signing config. Changing an installed app's signing key requires an uninstall,
   which destroys its passkeys.
 
@@ -100,7 +102,9 @@ Android has no built-in device-bound passkey provider. Google Password Manager, 
 passkeys to the user's Google account by default. They are end-to-end encrypted, but they end up
 on every device signed in to that account. Third-party password managers keep passkeys in their
 own encrypted vaults or files. None we checked (Bitwarden, KeePassDX) uses StrongBox or binds
-passkeys to the device in any way.
+passkeys to the device in any way. Chrome appears to create device-bound credentials through
+Play Services, but only non-discoverable ones (`residentKey: discouraged`). Discoverable requests
+go to the regular providers.
 
 Yet device binding was half the point of passkeys: a credential that can't be copied or
 social-engineered out of someone, because using it requires the physical hardware it lives on.
