@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.AlertDialog
@@ -31,6 +33,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -95,6 +98,7 @@ private fun HwbpScreen() {
     val trustStore = remember { AppTrustStore.get(ctx) }
     var trusted by remember { mutableStateOf(emptyList<AppTrust>()) }
     var providerEnabled by remember { mutableStateOf(isProviderEnabled(ctx)) }
+    var details by remember { mutableStateOf<PasskeyRecord?>(null) }
     var pendingRevoke by remember { mutableStateOf<AppTrust?>(null) }
     val scope = rememberCoroutineScope()
     var passkeys by remember { mutableStateOf(emptyList<PasskeyRecord>()) }
@@ -244,7 +248,7 @@ private fun HwbpScreen() {
             }
 
             items(passkeys, key = { it.credentialId }) { pk ->
-                Card(Modifier.fillMaxWidth(), colors = CardDefaults.outlinedCardColors()) {
+                Card(onClick = { details = pk }, modifier = Modifier.fillMaxWidth(), colors = CardDefaults.outlinedCardColors()) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(pk.rpId, style = MaterialTheme.typography.titleSmall)
@@ -253,11 +257,6 @@ private fun HwbpScreen() {
                                 (pk.createdAt?.let { "Created ${DateFormat.getDateInstance().format(Date(it))} · " } ?: "") +
                                     "used ${pk.signCount}×",
                                 style = MaterialTheme.typography.bodySmall,
-                            )
-                            Text(
-                                pk.attestation?.let(::describe) ?: "malformed or missing attestation",
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
                             )
                         }
                         Spacer(Modifier.width(8.dp))
@@ -344,6 +343,30 @@ private fun HwbpScreen() {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    details?.let { pk ->
+        ModalBottomSheet(onDismissRequest = { details = null }) {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()).padding(start = 24.dp, end = 24.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(pk.rpId, style = MaterialTheme.typography.titleLarge)
+                Detail("Account", pk.userName)
+                if (pk.displayName != pk.userName) Detail("Display name", pk.displayName)
+                Detail("Created", pk.createdAt?.let { DateFormat.getDateTimeInstance().format(Date(it)) } ?: "unknown")
+                Detail("Used", "${pk.signCount}×")
+                Detail("User ID", pk.userId, mono = true)
+                Detail("Credential ID", pk.credentialId, mono = true)
+                Text("Attestation at creation", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
+                val report = pk.attestation
+                if (report == null) {
+                    Text("malformed or missing attestation")
+                } else {
+                    attestationDetails(report).forEach { (label, value) -> Detail(label, value) }
                 }
             }
         }
@@ -461,6 +484,14 @@ private fun HwbpScreen() {
     }
 }
 
+@Composable
+private fun Detail(label: String, value: String, mono: Boolean = false) {
+    Column {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, fontFamily = if (mono) FontFamily.Monospace else null)
+    }
+}
+
 /** Whether the user has turned HWBP on as a credential provider in system settings. */
 private fun isProviderEnabled(ctx: Context): Boolean = runCatching {
     ctx.getSystemService(android.credentials.CredentialManager::class.java)
@@ -472,13 +503,38 @@ private fun logChain(chain: List<ByteArray>) {
     chain.forEachIndexed { i, der -> Log.i("HwbpSelfTest", "cert[$i] ${Base64.getEncoder().encodeToString(der)}") }
 }
 
+private fun securityLevel(level: Int): String = when (level) {
+    2 -> "StrongBox"
+    1 -> "TEE"
+    0 -> "Software"
+    else -> "?"
+}
+
+private fun attestationDetails(report: AttestationReport): List<Pair<String, String>> = listOf(
+    "Key security level" to "${securityLevel(report.keyMintSecurityLevel)} (KeyMint v${report.keyMintVersion})",
+    "Attestation security level" to
+        "${securityLevel(report.attestationSecurityLevel)} (attestation v${report.attestationVersion})",
+    "Verified boot" to if (!report.hasVerifiedBootState()) "not reported" else when (report.verifiedBootState) {
+        0 -> "verified"
+        1 -> "self-signed"
+        2 -> "unverified"
+        3 -> "failed"
+        else -> "unknown (${report.verifiedBootState})"
+    },
+    "Bootloader" to when {
+        !report.hasDeviceLocked() -> "not reported"
+        report.deviceLocked -> "locked"
+        else -> "UNLOCKED"
+    },
+    "Certificate chain" to if (report.hasChain()) {
+        "verified to pinned root ${report.chain.root} (${report.chain.length} certificates)"
+    } else {
+        "not verified"
+    },
+)
+
 private fun describe(report: AttestationReport): String {
-    val level = when (report.keyMintSecurityLevel) {
-        2 -> "StrongBox"
-        1 -> "TEE"
-        0 -> "Software"
-        else -> "?"
-    }
+    val level = securityLevel(report.keyMintSecurityLevel)
     val boot = if (!report.hasVerifiedBootState()) "boot state ?" else when (report.verifiedBootState) {
         0 -> "verified boot"
         1 -> "self-signed boot"
