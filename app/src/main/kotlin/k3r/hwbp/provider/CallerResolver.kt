@@ -12,8 +12,8 @@ import java.security.MessageDigest
 
 /** Who is asking, as far as the OS can tell us. */
 sealed interface ResolvedCaller {
-    /** A privileged browser vouching for [origin] ("https://example.com"). */
-    data class Browser(val origin: String) : ResolvedCaller {
+    /** A privileged browser ([packageName]) vouching for [origin] ("https://example.com"). */
+    data class Browser(val origin: String, val packageName: String) : ResolvedCaller {
         /** Browsers build clientDataJSON themselves and pass its hash. */
         fun toProto(clientDataHash: ByteArray?): Caller = caller {
             origin = this@Browser.origin
@@ -77,7 +77,7 @@ object CallerResolver {
         } catch (e: java.io.IOException) {
             throw SecurityException("privileged browser allowlist is unreadable", e)
         }
-        if (webOrigin != null) return ResolvedCaller.Browser(webOrigin.trimEnd('/'))
+        if (webOrigin != null) return ResolvedCaller.Browser(webOrigin.trimEnd('/'), info.packageName)
 
         val signingInfo = info.signingInfo
         // With one signer this is the current certificate, not a rotated-out one.

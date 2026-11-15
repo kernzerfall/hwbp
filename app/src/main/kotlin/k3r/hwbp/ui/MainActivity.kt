@@ -58,7 +58,9 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import k3r.hwbp.R
 import k3r.hwbp.core.Core
 import k3r.hwbp.keystore.StrongBoxKeys
+import k3r.hwbp.proto.AttestationFormat
 import k3r.hwbp.proto.AttestationReport
+import k3r.hwbp.proto.CreationInfo
 import k3r.hwbp.provider.HwbpCredentialProviderService
 import k3r.hwbp.store.AppTrust
 import k3r.hwbp.store.AppTrustStore
@@ -368,6 +370,13 @@ private fun HwbpScreen() {
                 } else {
                     attestationDetails(report).forEach { (label, value) -> Detail(label, value) }
                 }
+                Text("Creation request", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
+                val creation = pk.creation
+                if (creation == null) {
+                    Text("not recorded for this passkey")
+                } else {
+                    creationDetails(creation).forEach { (label, value) -> Detail(label, value) }
+                }
             }
         }
     }
@@ -532,6 +541,48 @@ private fun attestationDetails(report: AttestationReport): List<Pair<String, Str
         "not verified"
     },
 )
+
+private fun creationDetails(c: CreationInfo): List<Pair<String, String>> {
+    val unspecified = "not specified"
+    val app = !c.origin.startsWith("https://")
+    return listOfNotNull(
+        "Requested by" to when {
+            app -> "app " + (c.callerPackage.takeIf { c.hasCallerPackage() } ?: "(unknown package)")
+            c.hasCallerPackage() -> "${c.origin} via browser ${c.callerPackage}"
+            else -> c.origin
+        },
+        if (app) "Origin" to c.origin else null,
+        if (c.hasCallerCertSha256()) "App signing certificate (SHA-256)" to certFingerprint(c.callerCertSha256) else null,
+        "Site name" to (c.rpName.takeIf { c.hasRpName() } ?: unspecified),
+        "Resident key requested" to
+            (c.residentKey.takeIf { c.hasResidentKey() } ?: unspecified) +
+            (if (c.hasRequireResidentKey()) " (requireResidentKey: ${c.requireResidentKey})" else ""),
+        "User verification requested" to (c.userVerification.takeIf { c.hasUserVerification() } ?: unspecified),
+        // WebAuthn has no way to request or waive these at registration.
+        "User presence and verification performed" to "always",
+        "Authenticator attachment requested" to
+            (c.authenticatorAttachment.takeIf { c.hasAuthenticatorAttachment() } ?: unspecified),
+        "Attestation requested" to (c.attestation.takeIf { c.hasAttestation() } ?: unspecified),
+        "Attestation returned" to when (c.attestationFormat) {
+            AttestationFormat.ATTESTATION_FORMAT_ANDROID_KEY -> "android-key"
+            AttestationFormat.ATTESTATION_FORMAT_NONE -> "none"
+            else -> "unknown"
+        },
+        "Algorithms offered" to c.algorithmsList.joinToString { alg ->
+            when (alg) {
+                -7L -> "ES256"
+                -8L -> "EdDSA"
+                -35L -> "ES384"
+                -36L -> "ES512"
+                -37L -> "PS256"
+                -257L -> "RS256"
+                else -> null
+            }?.let { "$it ($alg)" } ?: "$alg"
+        }.ifEmpty { "none" },
+        "Excluded credentials in request" to "${c.excludeCredentials}",
+        "Extensions requested" to c.extensionsList.joinToString().ifEmpty { "none" },
+    )
+}
 
 private fun describe(report: AttestationReport): String {
     val level = securityLevel(report.keyMintSecurityLevel)

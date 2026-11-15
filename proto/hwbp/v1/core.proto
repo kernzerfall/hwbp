@@ -135,6 +135,34 @@ message RegistrationPlan {
   bytes credential_id = 5;
   ClientData client_data = 6;
   AttestationFormat attestation_format = 7;
+  // Not used by the later steps; Kotlin stores it with the passkey.
+  CreationInfo creation_info = 8;
+}
+
+// How a passkey came to be: who asked and what the request said. Informational
+// only, shown in the app. Request values are copied as sent (truncated), not
+// validated; unset means the request didn't say.
+message CreationInfo {
+  // Web origin, or "android:apk-key-hash:..." for a native app.
+  string origin = 1;
+  // Filled in by Kotlin: the calling package (the browser, for web origins) and,
+  // for native apps, the lowercase hex SHA-256 of its signing certificate.
+  optional string caller_package = 2;
+  optional string caller_cert_sha256 = 3;
+  optional string rp_name = 4;
+  // authenticatorSelection.*
+  optional string resident_key = 5;
+  optional bool require_resident_key = 6;
+  optional string user_verification = 7;
+  optional string authenticator_attachment = 8;
+  // Requested conveyance, and the format HWBP answered with.
+  optional string attestation = 9;
+  AttestationFormat attestation_format = 10;
+  // COSE algorithms from pubKeyCredParams, in the RP's order.
+  repeated sint64 algorithms = 11;
+  uint32 exclude_credentials = 12;
+  // Names of the requested extensions.
+  repeated string extensions = 13;
 }
 
 enum AttestationFormat {

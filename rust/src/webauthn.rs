@@ -15,8 +15,8 @@ use crate::attestation;
 use crate::b64;
 use crate::error::{Code, Error, Result};
 use crate::pb::{
-    AssertionPlan, AssertionSummary, AttestationFormat, AttestationReport, Caller, ClientData, RegistrationPlan,
-    RegistrationSummary,
+    AssertionPlan, AssertionSummary, AttestationFormat, AttestationReport, Caller, ClientData, CreationInfo,
+    RegistrationPlan, RegistrationSummary,
 };
 use ciborium::Value;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
@@ -265,6 +265,7 @@ pub fn registration_begin(request_json: &str, caller: &Caller, existing: &[Vec<u
     };
 
     Ok(RegistrationPlan {
+        creation_info: Some(creation_info(request_json, caller, attestation_format)),
         client_data: Some(client_data("webauthn.create", &opts.challenge, caller)?),
         rp_id,
         user_id,
@@ -273,6 +274,37 @@ pub fn registration_begin(request_json: &str, caller: &Caller, existing: &[Vec<u
         credential_id: cred_id,
         attestation_format: attestation_format.into(),
     })
+}
+
+/// Record of what the request said, for display in the app. Read leniently from
+/// the raw JSON so that an oddly typed informational member can't fail a
+/// registration; anything unusable is simply left unset.
+fn creation_info(request_json: &str, caller: &Caller, attestation_format: AttestationFormat) -> CreationInfo {
+    const MAX_ITEMS: usize = 16;
+    let text = |v: &serde_json::Value| v.as_str().map(|s| s.chars().take(64).collect::<String>());
+    let req: serde_json::Value = serde_json::from_str(request_json).unwrap_or_default();
+    let sel = &req["authenticatorSelection"];
+    CreationInfo {
+        origin: caller.origin.clone(),
+        caller_package: None,
+        caller_cert_sha256: None,
+        rp_name: text(&req["rp"]["name"]),
+        resident_key: text(&sel["residentKey"]),
+        require_resident_key: sel["requireResidentKey"].as_bool(),
+        user_verification: text(&sel["userVerification"]),
+        authenticator_attachment: text(&sel["authenticatorAttachment"]),
+        attestation: text(&req["attestation"]),
+        attestation_format: attestation_format.into(),
+        algorithms: req["pubKeyCredParams"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|p| p["alg"].as_i64()).take(MAX_ITEMS).collect())
+            .unwrap_or_default(),
+        exclude_credentials: req["excludeCredentials"].as_array().map_or(0, |a| a.len() as u32),
+        extensions: req["extensions"]
+            .as_object()
+            .map(|m| m.keys().take(MAX_ITEMS).map(|k| k.chars().take(64).collect()).collect())
+            .unwrap_or_default(),
+    }
 }
 
 fn flags_and_counter(rp_id: &str, flags: u8, sign_count: u32) -> Vec<u8> {
@@ -589,6 +621,38 @@ mod tests {
         let json = plan.client_data.as_ref().unwrap().json.as_deref().unwrap();
         assert!(json.starts_with(r#"{"type":"webauthn.create","challenge":"AAAAAAAAAAAAAAAAAAAAAA","origin":"https://example.com","crossOrigin":false}"#), "{json}");
         assert_eq!(plan.credential_id.len(), 32);
+    }
+
+    #[test]
+    fn creation_info_records_the_request() {
+        let req = r#"{"challenge":"AAAAAAAAAAAAAAAAAAAAAA","rp":{"id":"example.com","name":"Ex"},
+            "user":{"id":"dXNlcg","name":"alice"},
+            "pubKeyCredParams":[{"type":"public-key","alg":-257},{"type":"public-key","alg":-7}],
+            "authenticatorSelection":{"residentKey":"required","requireResidentKey":true,
+                "userVerification":"preferred","authenticatorAttachment":"platform"},
+            "excludeCredentials":[{"type":"public-key","id":"AQID"}],
+            "extensions":{"credProps":true},"attestation":"direct"}"#;
+        let info = registration_begin(req, &web("https://example.com"), &[]).unwrap().creation_info.unwrap();
+        assert_eq!(info.origin, "https://example.com");
+        assert_eq!(info.rp_name.as_deref(), Some("Ex"));
+        assert_eq!(info.resident_key.as_deref(), Some("required"));
+        assert_eq!(info.require_resident_key, Some(true));
+        assert_eq!(info.user_verification.as_deref(), Some("preferred"));
+        assert_eq!(info.authenticator_attachment.as_deref(), Some("platform"));
+        assert_eq!(info.attestation.as_deref(), Some("direct"));
+        assert_eq!(info.attestation_format(), AttestationFormat::AndroidKey);
+        assert_eq!(info.algorithms, [-257, -7]);
+        assert_eq!(info.exclude_credentials, 1);
+        assert_eq!(info.extensions, ["credProps"]);
+
+        // Absent or oddly typed informational members are left unset, not fatal.
+        let req = r#"{"challenge":"AAAAAAAAAAAAAAAAAAAAAA","rp":{"id":"example.com","name":7},
+            "user":{"id":"dXNlcg","name":"a"},"pubKeyCredParams":[{"type":"public-key","alg":-7}],
+            "authenticatorSelection":{"requireResidentKey":"yes"},"extensions":[]}"#;
+        let info = registration_begin(req, &web("https://example.com"), &[]).unwrap().creation_info.unwrap();
+        assert_eq!(info.attestation_format(), AttestationFormat::None);
+        assert!(info.extensions.is_empty());
+        assert_eq!((info.rp_name, info.resident_key, info.require_resident_key, info.attestation), (None, None, None, None));
     }
 
     #[test]

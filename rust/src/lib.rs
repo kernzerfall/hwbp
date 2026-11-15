@@ -11,6 +11,8 @@ pub mod api;
 
 /// Generated from `proto/hwbp/v1/core.proto`.
 pub mod pb {
+    // Generated oneofs hold whole messages; they are short-lived, so not worth boxing.
+    #![allow(clippy::large_enum_variant)]
     include!(concat!(env!("OUT_DIR"), "/hwbp.v1.rs"));
 }
 

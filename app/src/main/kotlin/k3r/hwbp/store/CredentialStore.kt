@@ -7,6 +7,7 @@ import android.util.AtomicFile
 import k3r.hwbp.core.B64
 import k3r.hwbp.keystore.StrongBoxKeys
 import k3r.hwbp.proto.AttestationReport
+import k3r.hwbp.proto.CreationInfo
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -36,6 +37,11 @@ data class PasskeyRecord(
     val publicKeySpki: String,
     /** Attestation report from the Rust policy at creation time; null if missing or malformed in the file. */
     val attestation: AttestationReport?,
+    /**
+     * Who requested the passkey and what the request said; null if missing or
+     * malformed in the file (always for passkeys created before this was recorded).
+     */
+    val creation: CreationInfo? = null,
 ) {
     val alias: String get() = StrongBoxKeys.alias(credentialId)
 
@@ -49,6 +55,7 @@ data class PasskeyRecord(
         .put("signCount", signCount)
         .put("publicKeySpki", publicKeySpki)
         .putOpt("attestation", attestation?.let { B64.enc(it.toByteArray()) })
+        .putOpt("creation", creation?.let { B64.enc(it.toByteArray()) })
 
     companion object {
         const val UNKNOWN_USER = "Unknown account"
@@ -68,6 +75,8 @@ data class PasskeyRecord(
                 publicKeySpki = o.getString("publicKeySpki"),
                 attestation = text("attestation")
                     ?.let { runCatching { AttestationReport.parseFrom(B64.dec(it)) }.getOrNull() },
+                creation = text("creation")
+                    ?.let { runCatching { CreationInfo.parseFrom(B64.dec(it)) }.getOrNull() },
             )
         }
     }

@@ -81,6 +81,15 @@ class CreatePasskeyActivity : ComponentActivity() {
                 // 256-bit values so passing every RP's IDs can't cause false matches.
                 val plan = Core.registrationBegin(call.requestJson, caller, existing.map { B64.decBytes(it.credentialId) })
                 val credentialId = B64.enc(plan.credentialId)
+                val creation = plan.creationInfo.toBuilder().apply {
+                    when (resolved) {
+                        is ResolvedCaller.Browser -> callerPackage = resolved.packageName
+                        is ResolvedCaller.App -> {
+                            callerPackage = resolved.packageName
+                            callerCertSha256 = resolved.certSha256Hex
+                        }
+                    }
+                }.build()
                 val alias = StrongBoxKeys.alias(credentialId)
 
                 val chain = withContext(Dispatchers.IO) {
@@ -112,6 +121,7 @@ class CreatePasskeyActivity : ComponentActivity() {
                             signCount = 0,
                             publicKeySpki = B64.enc(result.publicKeySpki),
                             attestation = toSign.attestation,
+                            creation = creation,
                         ),
                     )
                     runCatching(persistBinding).onFailure { Log.e(TAG, "could not store the app binding", it) }
