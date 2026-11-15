@@ -21,8 +21,9 @@ never leave it unencrypted, and **can NOT be synced or backed up**. See [Why](#w
   user auth.
 - The chain must verify to a pinned Google root ([`rust/data/roots`](rust/data/roots)), contain no revoked serial,
   have CA issuers only, and carry the attestation extension in the leaf only.
-- Every signature needs its own BiometricPrompt, on an unlocked device, and is verified against
-  the attested key before a response is returned.
+- Every signature needs its own BiometricPrompt, on an unlocked device, and is verified before a
+  response is returned: against the attested leaf key at registration, against the public key
+  stored at registration for sign-ins.
 - BE/BS flags are never set. `direct`/`indirect`/`enterprise` attestation returns `android-key`;
   anything else returns `none`.
 - No backup or device transfer (`allowBackup=false`, `dataExtractionRules`, `noBackupFilesDir`).

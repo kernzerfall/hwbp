@@ -10,11 +10,12 @@
 //!  * is a P-256 EC key that requires user authentication,
 //!  * is bound to *this* ceremony via the attestation challenge.
 //!
-//! The certificate chain is not verified against Google's roots here: the key
-//! was just created on this device by the OS, so this check guards against a
-//! silent TEE/software fallback, not against a compromised OS. Relying
-//! parties that request `attestation: "direct"` receive the full chain in an
-//! `android-key` attestation statement and can do the root verification.
+//! With the `chain-verification` feature (default), [`verify_strongbox`] also
+//! verifies the chain against pinned Google roots and the revocation snapshot
+//! (see `chain.rs`). Without it, only the leaf's claims are checked, which
+//! guards against a silent TEE/software fallback but not against a forged
+//! chain. Either way, relying parties that request `attestation: "direct"`
+//! receive the full chain in an `android-key` statement and can verify it.
 
 use crate::der::{self, CLASS_CONTEXT, CLASS_UNIVERSAL, Tlv};
 use crate::error::{Error, Result};
