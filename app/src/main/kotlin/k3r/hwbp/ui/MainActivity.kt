@@ -2,6 +2,8 @@
 
 package k3r.hwbp.ui
 
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.os.Bundle
@@ -9,6 +11,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -41,6 +44,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
@@ -52,6 +56,7 @@ import k3r.hwbp.R
 import k3r.hwbp.core.Core
 import k3r.hwbp.keystore.StrongBoxKeys
 import k3r.hwbp.proto.AttestationReport
+import k3r.hwbp.provider.HwbpCredentialProviderService
 import k3r.hwbp.store.AppTrust
 import k3r.hwbp.store.AppTrustStore
 import k3r.hwbp.store.certFingerprint
@@ -89,6 +94,7 @@ private fun HwbpScreen() {
     val store = remember { CredentialStore.get(ctx) }
     val trustStore = remember { AppTrustStore.get(ctx) }
     var trusted by remember { mutableStateOf(emptyList<AppTrust>()) }
+    var providerEnabled by remember { mutableStateOf(isProviderEnabled(ctx)) }
     var pendingRevoke by remember { mutableStateOf<AppTrust?>(null) }
     val scope = rememberCoroutineScope()
     var passkeys by remember { mutableStateOf(emptyList<PasskeyRecord>()) }
@@ -103,6 +109,7 @@ private fun HwbpScreen() {
     val debuggable = remember { ctx.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0 }
 
     fun reload() = scope.launch {
+        providerEnabled = isProviderEnabled(ctx)
         trusted = withContext(Dispatchers.IO) { trustStore.all() }.sortedByDescending { it.confirmedAt }
         try {
             val c = withContext(Dispatchers.IO) {
@@ -146,6 +153,13 @@ private fun HwbpScreen() {
                             if (strongBox) "StrongBox Keystore reported by this device."
                             else "No StrongBox on this device. HWBP will refuse to create passkeys.",
                         )
+                        if (providerEnabled) {
+                            Text(
+                                "Enabled as a passkey provider.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (isSystemInDarkTheme()) Color(0xFF81C784) else Color(0xFF2E7D32),
+                            )
+                        }
                         if (chainInfo.enabled) {
                             val snapshot = chainInfo.revocationSnapshotUnix
                                 .takeIf { chainInfo.hasRevocationSnapshotUnix() }
@@ -189,9 +203,11 @@ private fun HwbpScreen() {
                                     }
                                 },
                             ) { Text(if (selfTest == SelfTest.Running) "Testing…" else "Run self-test") }
-                            OutlinedButton(onClick = {
-                                runCatching { CredentialManager.create(ctx).createSettingsPendingIntent().send() }
-                            }) { Text("Enable provider") }
+                            if (!providerEnabled) {
+                                OutlinedButton(onClick = {
+                                    runCatching { CredentialManager.create(ctx).createSettingsPendingIntent().send() }
+                                }) { Text("Enable provider") }
+                            }
                         }
                     }
                 }
@@ -439,6 +455,12 @@ private fun HwbpScreen() {
         )
     }
 }
+
+/** Whether the user has turned HWBP on as a credential provider in system settings. */
+private fun isProviderEnabled(ctx: Context): Boolean = runCatching {
+    ctx.getSystemService(android.credentials.CredentialManager::class.java)
+        .isEnabledCredentialProviderService(ComponentName(ctx, HwbpCredentialProviderService::class.java))
+}.getOrDefault(false)
 
 /** Debug builds only: dump the self-test chain (public certs) for `adb logcat -s HwbpSelfTest`. */
 private fun logChain(chain: List<ByteArray>) {
