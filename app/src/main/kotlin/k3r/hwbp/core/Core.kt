@@ -10,6 +10,7 @@ import k3r.hwbp.proto.Caller
 import k3r.hwbp.proto.ErrorCode
 import k3r.hwbp.proto.RegistrationFinishResponse
 import k3r.hwbp.proto.RegistrationPlan
+import k3r.hwbp.proto.RegistrationSummary
 import k3r.hwbp.proto.RequestKt
 import k3r.hwbp.proto.Response
 import k3r.hwbp.proto.ToSign
@@ -22,6 +23,7 @@ import k3r.hwbp.proto.attestationVerifyRequest
 import k3r.hwbp.proto.registrationAuthDataRequest
 import k3r.hwbp.proto.registrationBeginRequest
 import k3r.hwbp.proto.registrationFinishRequest
+import k3r.hwbp.proto.registrationInspectRequest
 import k3r.hwbp.proto.request
 import k3r.hwbp.proto.versionRequest
 import java.util.Base64
@@ -64,6 +66,12 @@ object Core {
 
     fun version(): VersionResponse =
         call(Response.ResultCase.VERSION) { version = versionRequest {} }.version
+
+    /** Unvalidated RP ID and user of a creation request, for display before [registrationBegin]. */
+    fun inspectRegistration(requestJson: String): RegistrationSummary =
+        call(Response.ResultCase.REGISTRATION_SUMMARY) {
+            registrationInspect = registrationInspectRequest { this.requestJson = requestJson }
+        }.registrationSummary
 
     fun registrationBegin(requestJson: String, caller: Caller, existingCredentialIds: List<ByteString>): RegistrationPlan =
         call(Response.ResultCase.REGISTRATION_PLAN) {

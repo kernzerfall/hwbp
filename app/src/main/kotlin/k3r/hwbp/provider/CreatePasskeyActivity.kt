@@ -25,12 +25,15 @@ import kotlinx.coroutines.withContext
 
 /**
  * Registration ceremony:
+ *  0. Native apps only: the user must have bound the app to the RP ID for
+ *     registration, or does so now ([AppBinding]).
  *  1. Rust: parse + validate the request, pick a credential ID, compute clientDataHash.
  *  2. StrongBox: generate a key whose attestation challenge *is* clientDataHash.
  *  3. Rust: enforce the StrongBox attestation policy, build authenticatorData.
  *  4. BiometricPrompt: authorise one signature over authData || clientDataHash.
  *  5. Rust: verify that signature against the attested key, build the response.
- * Any failure after step 2 destroys the key.
+ * Any failure after step 2 destroys the key. A binding confirmed in step 0 is
+ * stored only once the passkey is.
  */
 class CreatePasskeyActivity : ComponentActivity() {
 
@@ -51,11 +54,32 @@ class CreatePasskeyActivity : ComponentActivity() {
 
         lifecycleScope.launch {
             try {
-                val caller = CallerResolver.resolve(this@CreatePasskeyActivity, request.callingAppInfo, call.clientDataHash)
+                val resolved = CallerResolver.resolve(this@CreatePasskeyActivity, request.callingAppInfo)
                 val store = CredentialStore.get(this@CreatePasskeyActivity)
+                val existing = store.all()
+                var persistBinding = {}
+                var appNote: String? = null
+                val caller = when (resolved) {
+                    is ResolvedCaller.Browser -> resolved.toProto(call.clientDataHash)
+                    is ResolvedCaller.App -> {
+                        val summary = Core.inspectRegistration(call.requestJson)
+                        if (!summary.hasRpId()) throw SecurityException("rp.id is required for app callers")
+                        val userId = B64.enc(summary.userId)
+                        val replaces = existing.filter {
+                            it.rpId.equals(summary.rpId, ignoreCase = true) && it.userId == userId
+                        }
+                        persistBinding = AppBinding.require(
+                            this@CreatePasskeyActivity, resolved, summary.rpId,
+                            registration = true, userId = userId, userName = summary.userName, replaces = replaces,
+                        )
+                        appNote = "Requested by the app ${resolved.packageName}." +
+                            if (replaces.isEmpty()) "" else "\nReplaces the existing passkey for this account."
+                        resolved.toProto(trustedRpId = summary.rpId)
+                    }
+                }
                 // Rust only matches these against excludeCredentials; IDs are random
                 // 256-bit values so passing every RP's IDs can't cause false matches.
-                val plan = Core.registrationBegin(call.requestJson, caller, store.all().map { B64.decBytes(it.credentialId) })
+                val plan = Core.registrationBegin(call.requestJson, caller, existing.map { B64.decBytes(it.credentialId) })
                 val credentialId = B64.enc(plan.credentialId)
                 val alias = StrongBoxKeys.alias(credentialId)
 
@@ -69,6 +93,7 @@ class CreatePasskeyActivity : ComponentActivity() {
                         StrongBoxKeys.signatureFor(alias),
                         title = "Create passkey for ${plan.rpId}",
                         subtitle = plan.userName,
+                        description = appNote,
                     )
                     val signature = withContext(Dispatchers.IO) {
                         authorised.update(toSign.toBeSigned.toByteArray())
@@ -89,6 +114,7 @@ class CreatePasskeyActivity : ComponentActivity() {
                             attestation = toSign.attestation,
                         ),
                     )
+                    runCatching(persistBinding).onFailure { Log.e(TAG, "could not store the app binding", it) }
                     succeed(result.responseJson)
                 } catch (t: Throwable) {
                     StrongBoxKeys.delete(alias)

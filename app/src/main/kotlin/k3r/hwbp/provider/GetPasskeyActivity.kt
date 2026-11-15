@@ -25,7 +25,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Assertion ceremony for the credential the user picked in the system sheet. */
+/**
+ * Assertion ceremony for the credential the user picked in the system sheet.
+ * Native apps must have been bound to the RP ID by the user, or are now
+ * ([AppBinding]); a new binding is stored only once the sign-in has succeeded.
+ */
 class GetPasskeyActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,7 +58,24 @@ class GetPasskeyActivity : ComponentActivity() {
 
         lifecycleScope.launch {
             try {
-                val caller = CallerResolver.resolve(this@GetPasskeyActivity, request.callingAppInfo, option.clientDataHash)
+                var persistBinding = {}
+                var appNote: String? = null
+                val caller = when (val resolved = CallerResolver.resolve(this@GetPasskeyActivity, request.callingAppInfo)) {
+                    is ResolvedCaller.Browser -> resolved.toProto(option.clientDataHash)
+                    is ResolvedCaller.App -> {
+                        val summary = Core.inspectAssertion(option.requestJson)
+                        if (!summary.hasRpId()) throw SecurityException("rpId is required for app callers")
+                        if (!record.rpId.equals(summary.rpId, ignoreCase = true)) {
+                            throw SecurityException("credential is not registered for this RP")
+                        }
+                        persistBinding = AppBinding.require(
+                            this@GetPasskeyActivity, resolved, summary.rpId,
+                            registration = false, userId = record.userId, userName = record.userName,
+                        )
+                        appNote = "Requested by the app ${resolved.packageName}."
+                        resolved.toProto(trustedRpId = summary.rpId)
+                    }
+                }
                 val plan = Core.assertionBegin(option.requestJson, caller, B64.decBytes(record.credentialId), record.rpId)
 
                 val nextCount = record.signCount + 1
@@ -64,6 +85,7 @@ class GetPasskeyActivity : ComponentActivity() {
                     StrongBoxKeys.signatureFor(record.alias),
                     title = "Sign in to ${plan.rpId}",
                     subtitle = record.userName,
+                    description = appNote,
                 )
                 val signature = withContext(Dispatchers.IO) {
                     authorised.update(toSign.toBeSigned.toByteArray())
@@ -77,6 +99,7 @@ class GetPasskeyActivity : ComponentActivity() {
                     B64.decBytes(record.publicKeySpki),
                 )
                 store.updateSignCount(record.credentialId, nextCount)
+                runCatching(persistBinding).onFailure { Log.e(TAG, "could not store the app binding", it) }
 
                 val result = Intent()
                 PendingIntentHandler.setGetCredentialResponse(result, GetCredentialResponse(PublicKeyCredential(responseJson)))

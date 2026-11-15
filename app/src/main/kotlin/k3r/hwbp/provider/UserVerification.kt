@@ -23,7 +23,13 @@ class UserVerificationException(val errorCode: Int, message: String) : Exception
  * itself, so a compromised app process can't skip this step.
  */
 object UserVerification {
-    suspend fun authorize(activity: Activity, signature: Signature, title: String, subtitle: String?): Signature =
+    suspend fun authorize(
+        activity: Activity,
+        signature: Signature,
+        title: String,
+        subtitle: String?,
+        description: String? = null,
+    ): Signature =
         suspendCancellableCoroutine { cont ->
             val cancel = CancellationSignal()
             cont.invokeOnCancellation { cancel.cancel() }
@@ -31,6 +37,7 @@ object UserVerification {
             val prompt = BiometricPrompt.Builder(activity)
                 .setTitle(title)
                 .apply { subtitle?.let { setSubtitle(it) } }
+                .apply { description?.let { setDescription(it) } }
                 .setAllowedAuthenticators(Authenticators.BIOMETRIC_STRONG or Authenticators.DEVICE_CREDENTIAL)
                 .setConfirmationRequired(true)
                 .build()

@@ -29,8 +29,27 @@ never leave it unencrypted, and **can NOT be synced or backed up**. See [Why](#w
 - No backup or device transfer (`allowBackup=false`, `dataExtractionRules`, `noBackupFilesDir`).
   No `INTERNET` permission.
 - All credentials are discoverable. Re-registering the same RP + user handle replaces the old one.
+- Web origins are accepted only from allowlisted browsers. A native app is served only for RP IDs
+  the user has bound it to, see [Native apps](#native-apps).
 
 AAGUID: `81ba41af-6f45-49e5-92fd-2b88324adbc2`, in [`rust/src/webauthn.rs`](rust/src/webauthn.rs).
+
+## Native apps
+
+There is no Digital Asset Links check, so nothing links an app to the domain it names. Instead,
+trust on first use: the first time an app uses an RP ID, HWBP shows the RP ID, the app's package
+name, the SHA-256 fingerprint of its signing certificate, the account and `user.id`, and, for a
+registration, whether an existing passkey would be replaced. The binding
+(package, certificate, RP ID) is stored once the confirmed ceremony succeeds, and can be revoked
+in the app.
+
+- Sign-in and registration are confirmed separately. Registration trust includes sign-in.
+- An app signed with a different certificate is a different app. Apps with several signers are
+  rejected.
+- The origin is `android:apk-key-hash:<base64url SHA-256 of the certificate>`. HWBP builds
+  `clientDataJSON` itself; a `clientDataHash` from an app is ignored.
+- This only stops an app from using an RP ID silently. Whether the app belongs to the site is
+  the user's judgement.
 
 ## Key storage
 
@@ -87,8 +106,8 @@ R8 keep rules ([`app/proguard-rules.pro`](app/proguard-rules.pro)) preserve the 
 
 ## Limitations
 
-- Native apps are rejected; only allowlisted browsers can use HWBP. Without a Digital Asset Links
-  check, an app could claim any RP ID.
+- No Digital Asset Links check: native apps are bound to RP IDs by the user, not verified against
+  the domain.
 - The privileged-browser allowlist ([`privileged_browsers.json`](app/src/main/assets/privileged_browsers.json)) and the revocation list
   are only as fresh as their last update.
 - Certificate validity periods are not checked.

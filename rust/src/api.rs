@@ -42,6 +42,8 @@ fn handle(input: &[u8]) -> Result<Out> {
     Ok(match required(req.op, "op")? {
         Op::Version(_) => Out::Version(version()),
 
+        Op::RegistrationInspect(r) => Out::RegistrationSummary(webauthn::inspect_registration(&r.request_json)?),
+
         Op::RegistrationBegin(r) => Out::RegistrationPlan(webauthn::registration_begin(
             &r.request_json,
             &required(r.caller, "caller")?,

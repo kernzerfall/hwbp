@@ -16,6 +16,7 @@ use crate::b64;
 use crate::error::{Code, Error, Result};
 use crate::pb::{
     AssertionPlan, AssertionSummary, AttestationFormat, AttestationReport, Caller, ClientData, RegistrationPlan,
+    RegistrationSummary,
 };
 use ciborium::Value;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
@@ -41,6 +42,9 @@ const FLAG_BS: u8 = 0x10;
 const FLAG_AT: u8 = 0x40;
 
 const CREDENTIAL_ID_LEN: usize = 32;
+
+/// Origin scheme of native-app callers, followed by base64url(SHA-256(signing cert)).
+const APK_KEY_HASH_PREFIX: &str = "android:apk-key-hash:";
 
 // ---------------------------------------------------------------------------
 // Incoming requests (subset of PublicKeyCredential{Creation,Request}Options JSON)
@@ -176,20 +180,57 @@ fn resolve_rp_id(requested: Option<&str>, caller: &Caller) -> Result<String> {
                 return Err(Error::security(format!("RP ID {rp_id} is not valid for origin {}", caller.origin)));
             }
         }
-        None => {
-            // Native-app callers (android:apk-key-hash:) are rejected: without a
-            // Digital Asset Links check, any app could claim any RP ID, phish
-            // assertions from RPs that accept app origins, and replace (destroy)
-            // existing passkeys by registering with a guessed user.id.
-            return Err(Error::new(Code::NotAllowed, format!("unsupported caller origin {}", caller.origin)));
-        }
+        None => check_app_caller(&rp_id, caller)?,
     }
     Ok(rp_id)
+}
+
+/// Native-app callers. There is no Digital Asset Links check, so nothing ties
+/// the app to the RP's domain cryptographically. Instead the user binds
+/// (package, signing cert) to an RP ID on first use, and Kotlin passes that
+/// binding as `trusted_rp_id`. Without it any app could claim any RP ID, phish
+/// assertions from RPs that accept app origins, and replace (destroy) existing
+/// passkeys by registering with a guessed user.id.
+fn check_app_caller(rp_id: &str, caller: &Caller) -> Result<()> {
+    let key_hash = caller
+        .origin
+        .strip_prefix(APK_KEY_HASH_PREFIX)
+        .ok_or_else(|| Error::new(Code::NotAllowed, format!("unsupported caller origin {}", caller.origin)))?;
+    if b64::decode(key_hash).map(|h| h.len()).unwrap_or(0) != 32 {
+        return Err(Error::security("app origin is not a SHA-256 signing certificate hash"));
+    }
+    if caller.package_name.as_deref().unwrap_or("").is_empty() {
+        return Err(Error::security("app caller without a package name"));
+    }
+    // Only a privileged browser may hand us a ready-made clientDataHash; for an
+    // app it would let the app pick the origin the RP sees.
+    if caller.client_data_hash.is_some() {
+        return Err(Error::security("app callers cannot supply a clientDataHash"));
+    }
+    match caller.trusted_rp_id.as_deref() {
+        Some(t) if t.eq_ignore_ascii_case(rp_id) => Ok(()),
+        _ => Err(Error::new(
+            Code::NotAllowed,
+            format!("the user has not bound this app to RP ID {rp_id}"),
+        )),
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
+
+/// Cheap parse used to show the user what a native app is asking for before
+/// the app is bound to the RP ID. Nothing here is validated against the caller;
+/// `registration_begin` does that.
+pub fn inspect_registration(request_json: &str) -> Result<RegistrationSummary> {
+    let opts: CreationOptions = serde_json::from_str(request_json)?;
+    Ok(RegistrationSummary {
+        rp_id: opts.rp.id.map(|r| r.to_ascii_lowercase()),
+        user_id: b64::decode(&opts.user.id)?,
+        user_name: opts.user.name,
+    })
+}
 
 pub fn registration_begin(request_json: &str, caller: &Caller, existing: &[Vec<u8>]) -> Result<RegistrationPlan> {
     let opts: CreationOptions = serde_json::from_str(request_json)?;
@@ -476,6 +517,16 @@ mod tests {
             origin: origin.into(),
             package_name: None,
             client_data_hash: None,
+            trusted_rp_id: None,
+        }
+    }
+
+    fn app(trusted_rp_id: Option<&str>) -> Caller {
+        Caller {
+            origin: format!("{APK_KEY_HASH_PREFIX}{}", b64::encode(&[7; 32])),
+            package_name: Some("com.x".into()),
+            client_data_hash: None,
+            trusted_rp_id: trusted_rp_id.map(Into::into),
         }
     }
 
@@ -485,13 +536,45 @@ mod tests {
         assert!(resolve_rp_id(Some("example.com"), &web("https://evil-example.com")).is_err());
         assert!(resolve_rp_id(Some("example.com"), &web("http://example.com")).is_err());
         assert_eq!(resolve_rp_id(None, &web("https://a.b.c:8443/x")).unwrap(), "a.b.c");
-        let app = Caller {
-            origin: "android:apk-key-hash:abc".into(),
-            package_name: Some("com.x".into()),
-            client_data_hash: None,
-        };
-        assert!(resolve_rp_id(None, &app).is_err());
-        assert!(resolve_rp_id(Some("example.com"), &app).is_err());
+    }
+
+    #[test]
+    fn app_callers_need_a_user_confirmed_binding() {
+        // No binding, or a binding for another RP ID.
+        assert_eq!(resolve_rp_id(Some("example.com"), &app(None)).err().unwrap().code, Code::NotAllowed);
+        assert_eq!(resolve_rp_id(Some("example.com"), &app(Some("other.com"))).err().unwrap().code, Code::NotAllowed);
+        // Apps have no origin to default the RP ID from.
+        assert!(resolve_rp_id(None, &app(Some("example.com"))).is_err());
+
+        assert_eq!(resolve_rp_id(Some("Example.com"), &app(Some("example.com"))).unwrap(), "example.com");
+
+        let mut c = app(Some("example.com"));
+        c.client_data_hash = Some(vec![9; 32]);
+        assert_eq!(resolve_rp_id(Some("example.com"), &c).err().unwrap().code, Code::Security);
+
+        let mut c = app(Some("example.com"));
+        c.package_name = None;
+        assert!(resolve_rp_id(Some("example.com"), &c).is_err());
+
+        for origin in ["android:apk-key-hash:abc", "http://example.com", "example.com"] {
+            let mut c = app(Some("example.com"));
+            c.origin = origin.into();
+            assert!(resolve_rp_id(Some("example.com"), &c).is_err(), "{origin}");
+        }
+    }
+
+    #[test]
+    fn app_client_data_names_the_package() {
+        let req = r#"{"challenge":"AAAAAAAAAAAAAAAAAAAAAA","rp":{"id":"example.com"},
+            "user":{"id":"dXNlcg","name":"alice"},"pubKeyCredParams":[{"type":"public-key","alg":-7}]}"#;
+        let s = inspect_registration(req).unwrap();
+        assert_eq!((s.rp_id.as_deref(), s.user_id.as_slice(), s.user_name.as_str()), (Some("example.com"), &b"user"[..], "alice"));
+
+        let caller = app(Some("example.com"));
+        let plan = registration_begin(req, &caller, &[]).unwrap();
+        let json = plan.client_data.unwrap().json.unwrap();
+        assert!(json.contains(&format!(r#""origin":"{}""#, caller.origin)), "{json}");
+        assert!(json.contains(r#""androidPackageName":"com.x""#), "{json}");
     }
 
     #[test]

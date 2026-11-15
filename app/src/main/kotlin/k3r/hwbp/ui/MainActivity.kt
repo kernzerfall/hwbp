@@ -52,6 +52,9 @@ import k3r.hwbp.R
 import k3r.hwbp.core.Core
 import k3r.hwbp.keystore.StrongBoxKeys
 import k3r.hwbp.proto.AttestationReport
+import k3r.hwbp.store.AppTrust
+import k3r.hwbp.store.AppTrustStore
+import k3r.hwbp.store.certFingerprint
 import k3r.hwbp.store.CredentialStore
 import k3r.hwbp.store.CredentialStoreException
 import k3r.hwbp.store.DamagedEntry
@@ -84,6 +87,9 @@ private sealed interface SelfTest {
 private fun HwbpScreen() {
     val ctx = LocalContext.current
     val store = remember { CredentialStore.get(ctx) }
+    val trustStore = remember { AppTrustStore.get(ctx) }
+    var trusted by remember { mutableStateOf(emptyList<AppTrust>()) }
+    var pendingRevoke by remember { mutableStateOf<AppTrust?>(null) }
     val scope = rememberCoroutineScope()
     var passkeys by remember { mutableStateOf(emptyList<PasskeyRecord>()) }
     var selfTest by remember { mutableStateOf<SelfTest>(SelfTest.Idle) }
@@ -97,6 +103,7 @@ private fun HwbpScreen() {
     val debuggable = remember { ctx.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0 }
 
     fun reload() = scope.launch {
+        trusted = withContext(Dispatchers.IO) { trustStore.all() }.sortedByDescending { it.confirmedAt }
         try {
             val c = withContext(Dispatchers.IO) {
                 store.pruneOrphans()
@@ -238,6 +245,43 @@ private fun HwbpScreen() {
                 }
             }
 
+            if (trusted.isNotEmpty()) {
+                item {
+                    Text(
+                        "Trusted apps (${trusted.size})",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                    Text(
+                        "Apps you allowed to use a site's passkeys. HWBP can't verify that an app belongs " +
+                            "to a site; it only remembers your answer. Revoke one to be asked again.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                items(trusted, key = { "trust:${it.packageName}:${it.certSha256}:${it.rpId}" }) { t ->
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.outlinedCardColors()) {
+                        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(t.rpId, style = MaterialTheme.typography.titleSmall)
+                                Text(t.packageName)
+                                Text(
+                                    (if (t.registration) "Create passkeys and sign in" else "Sign in only") +
+                                        " · since ${DateFormat.getDateInstance().format(Date(t.confirmedAt))}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                Text(
+                                    certFingerprint(t.certSha256),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            TextButton(onClick = { pendingRevoke = t }) { Text("Revoke") }
+                        }
+                    }
+                }
+            }
+
             if (damaged.isNotEmpty()) {
                 item {
                     Text(
@@ -308,6 +352,31 @@ private fun HwbpScreen() {
                 }) { Text("Destroy", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancel") } },
+        )
+    }
+
+    pendingRevoke?.let { t ->
+        AlertDialog(
+            onDismissRequest = { pendingRevoke = null },
+            title = { Text("Revoke trust?") },
+            text = {
+                Text(
+                    "${t.packageName} will no longer be able to " +
+                        (if (t.registration) "create passkeys for or sign in to" else "sign in to") +
+                        " ${t.rpId} without asking you again. No passkey is deleted.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingRevoke = null
+                    scope.launch {
+                        runCatching { withContext(Dispatchers.IO) { trustStore.revoke(t) } }
+                            .onFailure { Log.e("Hwbp", "revoke failed", it) }
+                        reload()
+                    }
+                }) { Text("Revoke", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { pendingRevoke = null }) { Text("Cancel") } },
         )
     }
 

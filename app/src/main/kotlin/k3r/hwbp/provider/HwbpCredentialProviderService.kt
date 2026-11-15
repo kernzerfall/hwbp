@@ -46,8 +46,9 @@ class HwbpCredentialProviderService : CredentialProviderService() {
             callback.onError(CreateCredentialUnknownException("HWBP only handles passkeys"))
             return
         }
-        if (!StrongBoxKeys.isAvailable(this) || webOrigin(request.callingAppInfo) == null) {
-            // Refuse rather than silently degrading to the TEE; native apps are not offered HWBP.
+        if (!StrongBoxKeys.isAvailable(this) || caller(request.callingAppInfo) == null) {
+            // Refuse rather than silently degrading to the TEE. Native apps get the entry
+            // too; whether they may use the RP ID is the user's call in CreatePasskeyActivity.
             callback.onResult(BeginCreateCredentialResponse())
             return
         }
@@ -68,8 +69,8 @@ class HwbpCredentialProviderService : CredentialProviderService() {
         cancellationSignal: CancellationSignal,
         callback: OutcomeReceiver<BeginGetCredentialResponse, GetCredentialException>,
     ) {
-        val origin = webOrigin(request.callingAppInfo)
-        if (origin == null) {
+        val caller = caller(request.callingAppInfo)
+        if (caller == null) {
             callback.onResult(BeginGetCredentialResponse())
             return
         }
@@ -89,8 +90,13 @@ class HwbpCredentialProviderService : CredentialProviderService() {
 
             val allowed = summary.allowCredentialsList.mapTo(HashSet()) { B64.enc(it) }
             // No rpId in the request => it defaults to the caller's web origin host.
+            // Apps have no such default. Their entries are listed whether or not the
+            // app is bound to the RP ID yet: the list goes to the system sheet, not to
+            // the app, and GetPasskeyActivity asks the user before anything is signed.
             val rpId = summary.rpId.takeIf { summary.hasRpId() }
-                ?: origin.removePrefix("https://").substringBefore('/').substringBefore(':')
+                ?: (caller as? ResolvedCaller.Browser)?.origin
+                    ?.removePrefix("https://")?.substringBefore('/')?.substringBefore(':')
+                ?: continue
 
             for (rec in records.filter { it.rpId.equals(rpId, ignoreCase = true) }) {
                 if (allowed.isNotEmpty() && rec.credentialId !in allowed) continue
@@ -125,10 +131,10 @@ class HwbpCredentialProviderService : CredentialProviderService() {
         const val REQUEST_CREATE = 1
     }
 
-    /** The caller's web origin, or null (logged) if [CallerResolver] rejects it. */
-    private fun webOrigin(info: CallingAppInfo?): String? {
+    /** The caller, or null (logged) if [CallerResolver] rejects it. */
+    private fun caller(info: CallingAppInfo?): ResolvedCaller? {
         if (info == null) return null
-        return runCatching { CallerResolver.resolve(this, info, null).origin }
+        return runCatching { CallerResolver.resolve(this, info) }
             .onFailure { Log.w(TAG, "rejected caller ${info.packageName}", it) }
             .getOrNull()
     }

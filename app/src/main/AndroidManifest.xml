@@ -8,6 +8,8 @@
         android:required="true" />
 
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- Keeps other apps' overlays off the screen that binds a native app to an RP ID. -->
+    <uses-permission android:name="android.permission.HIDE_OVERLAY_WINDOWS" />
 
     <!--
       Deliberately NO INTERNET permission: nothing in this app can talk to the network.
@@ -40,12 +42,14 @@
 
         <activity
             android:name=".provider.CreatePasskeyActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|uiMode|density|fontScale"
             android:excludeFromRecents="true"
             android:exported="false"
             android:theme="@style/Theme.HWBP.Translucent" />
 
         <activity
             android:name=".provider.GetPasskeyActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|uiMode|density|fontScale"
             android:excludeFromRecents="true"
             android:exported="false"
             android:theme="@style/Theme.HWBP.Translucent" />

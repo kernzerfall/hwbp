@@ -24,6 +24,7 @@ message Request {
     AssertionAuthDataRequest assertion_auth_data = 7;
     AssertionFinishRequest assertion_finish = 8;
     AttestationVerifyRequest attestation_verify = 9;
+    RegistrationInspectRequest registration_inspect = 10;
   }
 }
 
@@ -38,6 +39,7 @@ message Response {
     AssertionPlan assertion_plan = 7;
     AssertionFinishResponse assertion_finish = 8;
     AttestationReport attestation_report = 9;
+    RegistrationSummary registration_summary = 10;
   }
 }
 
@@ -84,6 +86,9 @@ message Caller {
   optional string package_name = 2;
   // Set only by privileged browsers, which build clientDataJSON themselves.
   optional bytes client_data_hash = 3;
+  // Native apps only: the RP ID the user has bound this package + signing cert
+  // to (trust on first use). Must equal the RP ID the request resolves to.
+  optional string trusted_rp_id = 4;
 }
 
 message ClientData {
@@ -101,6 +106,18 @@ message ToSign {
 }
 
 // --- registration ------------------------------------------------------------
+
+// Cheap parse used to show the user what a native app asks for, before the
+// binding is confirmed.
+message RegistrationInspectRequest {
+  string request_json = 1;
+}
+
+message RegistrationSummary {
+  optional string rp_id = 1;
+  bytes user_id = 2;
+  string user_name = 3;
+}
 
 message RegistrationBeginRequest {
   string request_json = 1;

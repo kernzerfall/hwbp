@@ -3,7 +3,8 @@
 <resources>
     <style name="Theme.HWBP" parent="android:Theme.Material.NoActionBar" />
 
-    <!-- Provider activities show nothing but the system BiometricPrompt. -->
+    <!-- Provider activities show the system BiometricPrompt and, for a native app's
+         first use of an RP ID, the binding confirmation. -->
     <style name="Theme.HWBP.Translucent" parent="android:Theme.Translucent.NoTitleBar">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>

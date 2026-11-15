@@ -24,6 +24,7 @@ internal sealed interface Failure {
 internal fun Throwable.toFailure(): Failure = when (this) {
     is UserVerificationException ->
         if (cancelled) Failure.Cancelled else Failure.Dom(NotAllowedError(), message ?: "user verification failed")
+    is BindingDeclinedException -> Failure.Cancelled
     is CoreException -> Failure.Dom(
         when (code) {
             ErrorCode.ERROR_CODE_INVALID_STATE -> InvalidStateError()
