@@ -177,11 +177,11 @@ fn resolve_rp_id(requested: Option<&str>, caller: &Caller) -> Result<String> {
             }
         }
         None => {
-            if !caller.origin.starts_with("android:apk-key-hash:") {
-                return Err(Error::security(format!("unsupported origin {}", caller.origin)));
-            }
-            // App callers: Digital Asset Links verification of rp_id <-> app is
-            // the Kotlin side's job (see CallerResolver).
+            // Native-app callers (android:apk-key-hash:) are rejected: without a
+            // Digital Asset Links check, any app could claim any RP ID, phish
+            // assertions from RPs that accept app origins, and replace (destroy)
+            // existing passkeys by registering with a guessed user.id.
+            return Err(Error::new(Code::NotAllowed, format!("unsupported caller origin {}", caller.origin)));
         }
     }
     Ok(rp_id)
@@ -491,7 +491,7 @@ mod tests {
             client_data_hash: None,
         };
         assert!(resolve_rp_id(None, &app).is_err());
-        assert!(resolve_rp_id(Some("example.com"), &app).is_ok());
+        assert!(resolve_rp_id(Some("example.com"), &app).is_err());
     }
 
     #[test]

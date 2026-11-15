@@ -17,6 +17,7 @@ import androidx.credentials.provider.BeginCreatePublicKeyCredentialRequest
 import androidx.credentials.provider.BeginGetCredentialRequest
 import androidx.credentials.provider.BeginGetCredentialResponse
 import androidx.credentials.provider.BeginGetPublicKeyCredentialOption
+import androidx.credentials.provider.CallingAppInfo
 import androidx.credentials.provider.CreateEntry
 import androidx.credentials.provider.CredentialEntry
 import androidx.credentials.provider.CredentialProviderService
@@ -44,8 +45,8 @@ class HwbpCredentialProviderService : CredentialProviderService() {
             callback.onError(CreateCredentialUnknownException("HWBP only handles passkeys"))
             return
         }
-        if (!StrongBoxKeys.isAvailable(this)) {
-            // Refuse rather than silently degrading to the TEE.
+        if (!StrongBoxKeys.isAvailable(this) || webOrigin(request.callingAppInfo) == null) {
+            // Refuse rather than silently degrading to the TEE; native apps are not offered HWBP.
             callback.onResult(BeginCreateCredentialResponse())
             return
         }
@@ -66,6 +67,11 @@ class HwbpCredentialProviderService : CredentialProviderService() {
         cancellationSignal: CancellationSignal,
         callback: OutcomeReceiver<BeginGetCredentialResponse, GetCredentialException>,
     ) {
+        val origin = webOrigin(request.callingAppInfo)
+        if (origin == null) {
+            callback.onResult(BeginGetCredentialResponse())
+            return
+        }
         val store = CredentialStore.get(this)
         val entries = mutableListOf<CredentialEntry>()
 
@@ -76,10 +82,8 @@ class HwbpCredentialProviderService : CredentialProviderService() {
 
             val allowed = summary.allowCredentialsList.mapTo(HashSet()) { B64.enc(it) }
             // No rpId in the request => it defaults to the caller's web origin host.
-            val rpId = summary.rpId.takeIf { summary.hasRpId() } ?: request.callingAppInfo
-                ?.let { runCatching { CallerResolver.resolve(this, it, null).origin }.getOrNull() }
-                ?.removePrefix("https://")?.substringBefore('/')?.substringBefore(':')
-                ?: continue
+            val rpId = summary.rpId.takeIf { summary.hasRpId() }
+                ?: origin.removePrefix("https://").substringBefore('/').substringBefore(':')
 
             for (rec in store.forRp(rpId)) {
                 if (allowed.isNotEmpty() && rec.credentialId !in allowed) continue
@@ -112,5 +116,13 @@ class HwbpCredentialProviderService : CredentialProviderService() {
     private companion object {
         const val TAG = "HwbpProvider"
         const val REQUEST_CREATE = 1
+    }
+
+    /** The caller's web origin, or null (logged) if [CallerResolver] rejects it. */
+    private fun webOrigin(info: CallingAppInfo?): String? {
+        if (info == null) return null
+        return runCatching { CallerResolver.resolve(this, info, null).origin }
+            .onFailure { Log.w(TAG, "rejected caller ${info.packageName}", it) }
+            .getOrNull()
     }
 }

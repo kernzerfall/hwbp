@@ -85,8 +85,8 @@ R8 keep rules ([`app/proguard-rules.pro`](app/proguard-rules.pro)) preserve the 
 
 ## Limitations
 
-- No Digital Asset Links check for native-app callers. RPs must verify the
-  `android:apk-key-hash:` origin.
+- Native apps are rejected; only allowlisted browsers can use HWBP. Without a Digital Asset Links
+  check, an app could claim any RP ID.
 - The privileged-browser allowlist ([`privileged_browsers.json`](app/src/main/assets/privileged_browsers.json)) and the revocation list
   are only as fresh as their last update.
 - Certificate validity periods are not checked.
