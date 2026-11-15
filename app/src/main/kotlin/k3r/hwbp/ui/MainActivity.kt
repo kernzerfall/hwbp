@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
@@ -351,7 +352,7 @@ private fun HwbpScreen() {
     }
 
     details?.let { pk ->
-        ModalBottomSheet(onDismissRequest = { details = null }) {
+        ModalBottomSheet(onDismissRequest = { details = null }, modifier = Modifier.statusBarsPadding()) {
             Column(
                 Modifier.verticalScroll(rememberScrollState()).padding(start = 24.dp, end = 24.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
