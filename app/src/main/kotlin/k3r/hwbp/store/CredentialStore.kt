@@ -224,7 +224,9 @@ class CredentialStore private constructor(private val dir: File) {
 
     private fun mutate(f: (List<PasskeyRecord>) -> List<PasskeyRecord>) = synchronized(lock) {
         val c = read()
-        write(f(c.records), c.damaged)
+        val records = f(c.records)
+        // Unchanged (e.g. a prune that found nothing): leave the file as it is.
+        if (records != c.records) write(records, c.damaged)
     }
 
     /**
