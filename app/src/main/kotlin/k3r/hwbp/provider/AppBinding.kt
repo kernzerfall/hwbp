@@ -134,8 +134,9 @@ private fun BindingScreen(
                         Field(
                             "Replaces an existing passkey",
                             "YES. Destroyed for good if you continue:\n" + replaces.joinToString("\n") {
-                                "${it.userName}, created ${DateFormat.getDateInstance().format(Date(it.createdAt))}, " +
-                                    "used ${it.signCount}×"
+                                it.userName +
+                                    (it.createdAt?.let { t -> ", created ${DateFormat.getDateInstance().format(Date(t))}" } ?: "") +
+                                    ", used ${it.signCount}×"
                             },
                             warn = true,
                         )

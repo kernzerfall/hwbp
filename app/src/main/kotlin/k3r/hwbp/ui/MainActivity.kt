@@ -117,7 +117,7 @@ private fun HwbpScreen() {
                 store.sweepOrphanKeys()
                 store.contents()
             }
-            passkeys = c.records.sortedByDescending { it.createdAt }
+            passkeys = c.records.sortedByDescending { it.createdAt ?: 0 }
             damaged = c.damaged
             storeError = false
         } catch (e: CredentialStoreException) {
@@ -250,11 +250,15 @@ private fun HwbpScreen() {
                             Text(pk.rpId, style = MaterialTheme.typography.titleSmall)
                             Text(pk.displayName.takeIf { it != pk.userName }?.let { "$it · ${pk.userName}" } ?: pk.userName)
                             Text(
-                                "Created ${DateFormat.getDateInstance().format(Date(pk.createdAt))} · " +
+                                (pk.createdAt?.let { "Created ${DateFormat.getDateInstance().format(Date(it))} · " } ?: "") +
                                     "used ${pk.signCount}×",
                                 style = MaterialTheme.typography.bodySmall,
                             )
-                            Text(describe(pk.attestation), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                            Text(
+                                pk.attestation?.let(::describe) ?: "malformed or missing attestation",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                            )
                         }
                         Spacer(Modifier.width(8.dp))
                         TextButton(onClick = { pendingDelete = pk }) { Text("Delete") }

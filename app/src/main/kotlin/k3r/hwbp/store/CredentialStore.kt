@@ -17,6 +17,11 @@ import java.io.IOException
 /**
  * Non-secret passkey metadata. The private key itself never leaves StrongBox;
  * this is just what we need to list credentials and build responses.
+ *
+ * Only what a sign-in needs is mandatory in the file: [credentialId], [rpId],
+ * [userId], [signCount] (a guessed counter could go backwards, which RPs read as
+ * a cloned key) and [publicKeySpki]. Everything else is informational, and a
+ * missing or malformed value doesn't make the passkey unusable.
  */
 data class PasskeyRecord(
     val credentialId: String,
@@ -25,11 +30,12 @@ data class PasskeyRecord(
     val userId: String,
     val userName: String,
     val displayName: String,
-    val createdAt: Long,
+    /** null if missing or malformed in the file. */
+    val createdAt: Long?,
     val signCount: Long,
     val publicKeySpki: String,
-    /** Attestation report from the Rust policy at creation time. */
-    val attestation: AttestationReport,
+    /** Attestation report from the Rust policy at creation time; null if missing or malformed in the file. */
+    val attestation: AttestationReport?,
 ) {
     val alias: String get() = StrongBoxKeys.alias(credentialId)
 
@@ -39,25 +45,31 @@ data class PasskeyRecord(
         .put("userId", userId)
         .put("userName", userName)
         .put("displayName", displayName)
-        .put("createdAt", createdAt)
+        .putOpt("createdAt", createdAt)
         .put("signCount", signCount)
         .put("publicKeySpki", publicKeySpki)
-        .put("attestation", B64.enc(attestation.toByteArray()))
+        .putOpt("attestation", attestation?.let { B64.enc(it.toByteArray()) })
 
     companion object {
-        fun fromJson(o: JSONObject) = PasskeyRecord(
-            credentialId = o.getString("credentialId"),
-            rpId = o.getString("rpId"),
-            userId = o.getString("userId"),
-            userName = o.getString("userName"),
-            displayName = o.getString("displayName"),
-            createdAt = o.getLong("createdAt"),
-            signCount = o.getLong("signCount"),
-            publicKeySpki = o.getString("publicKeySpki"),
-            attestation = o.optString("attestation").takeIf { it.isNotEmpty() }
-                ?.let { AttestationReport.parseFrom(B64.dec(it)) }
-                ?: AttestationReport.getDefaultInstance(),
-        )
+        const val UNKNOWN_USER = "Unknown account"
+
+        /** @throws org.json.JSONException if a mandatory field is missing or has the wrong type. */
+        fun fromJson(o: JSONObject): PasskeyRecord {
+            fun text(key: String) = (o.opt(key) as? String)?.takeIf { it.isNotEmpty() }
+            val userName = text("userName") ?: text("displayName") ?: UNKNOWN_USER
+            return PasskeyRecord(
+                credentialId = o.getString("credentialId"),
+                rpId = o.getString("rpId"),
+                userId = o.getString("userId"),
+                userName = userName,
+                displayName = text("displayName") ?: userName,
+                createdAt = (o.opt("createdAt") as? Number)?.toLong(),
+                signCount = o.getLong("signCount"),
+                publicKeySpki = o.getString("publicKeySpki"),
+                attestation = text("attestation")
+                    ?.let { runCatching { AttestationReport.parseFrom(B64.dec(it)) }.getOrNull() },
+            )
+        }
     }
 }
 
