@@ -8,7 +8,9 @@ import k3r.hwbp.core.B64
 import k3r.hwbp.keystore.StrongBoxKeys
 import k3r.hwbp.proto.AttestationReport
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
+import org.json.JSONTokener
 import java.io.File
 import java.io.IOException
 
@@ -60,12 +62,13 @@ data class PasskeyRecord(
 }
 
 /**
- * passkeys.json exists but isn't a readable JSON array. Never treated as "no
+ * passkeys.json can't be used: it is unreadable or was written by a newer
+ * schema version. Never treated as "no
  * passkeys": that would make [CredentialStore.sweepOrphanKeys] destroy every key
  * and the next write overwrite the file. Every operation fails until the user
  * runs [CredentialStore.reset].
  */
-class CredentialStoreException(message: String, cause: Throwable) : Exception(message, cause)
+class CredentialStoreException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /**
  * An entry of passkeys.json that can't be used as a passkey: either a record that
@@ -89,6 +92,9 @@ class StoreContents(val records: List<PasskeyRecord>, val damaged: List<DamagedE
 /**
  * Stored in [Context.getNoBackupFilesDir] so it is excluded from every backup
  * mechanism even if the manifest policy were relaxed.
+ *
+ * Format: `{"version": 1, "passkeys": [...]}`. Schema 0 was the bare array; it
+ * is rewritten in the current format the first time it is read.
  *
  * Entries are parsed one by one: a damaged entry doesn't take the others down
  * (see [DamagedEntry]).
@@ -149,7 +155,7 @@ class CredentialStore private constructor(private val dir: File) {
     }
 
     /**
-     * Recovery from an unreadable file: moves it aside (kept for manual repair) and
+     * Recovery from an unusable file: moves it aside (kept for manual repair) and
      * writes a [DamagedEntry] stub for every credential key in StrongBox, so no key
      * is swept and each can be destroyed individually. The passkeys themselves are
      * not usable again: RP ID and user handle are only in the lost file.
@@ -226,14 +232,29 @@ class CredentialStore private constructor(private val dir: File) {
      * interrupted write leaves the previous file intact; there is no backup file
      * to consider.
      *
-     * @throws CredentialStoreException if the file exists but isn't a readable JSON array.
+     * @throws CredentialStoreException see there.
      */
     private fun read(): StoreContents {
         if (!file.baseFile.exists()) return StoreContents(emptyList(), emptyList())
-        val arr = try {
-            JSONArray(String(file.readFully(), Charsets.UTF_8))
+        val version: Int
+        val arr: JSONArray
+        try {
+            when (val root = JSONTokener(String(file.readFully(), Charsets.UTF_8)).nextValue()) {
+                is JSONArray -> {
+                    version = 0
+                    arr = root
+                }
+                is JSONObject -> {
+                    version = root.getInt("version")
+                    arr = root.getJSONArray("passkeys")
+                }
+                else -> throw JSONException("neither an object nor an array")
+            }
         } catch (e: Exception) {
             throw CredentialStoreException("$FILE_NAME is unreadable or corrupt", e)
+        }
+        if (version !in 0..SCHEMA_VERSION) {
+            throw CredentialStoreException("$FILE_NAME has schema version $version; this build reads up to $SCHEMA_VERSION")
         }
         val records = ArrayList<PasskeyRecord>()
         val damaged = ArrayList<DamagedEntry>()
@@ -244,6 +265,8 @@ class CredentialStore private constructor(private val dir: File) {
                 ?.let { runCatching { PasskeyRecord.fromJson(it) }.getOrNull() }
             if (record != null) records += record else damaged += parseDamaged(raw ?: JSONObject.NULL)
         }
+        // Schema 0 -> 1 only wraps the array; entries are unchanged.
+        if (version < SCHEMA_VERSION) write(records, damaged)
         return StoreContents(records, damaged)
     }
 
@@ -263,7 +286,7 @@ class CredentialStore private constructor(private val dir: File) {
         damaged.forEach { arr.put(it.raw) }
         val out = file.startWrite()
         try {
-            out.write(arr.toString().toByteArray())
+            out.write(JSONObject().put("version", SCHEMA_VERSION).put("passkeys", arr).toString().toByteArray())
             file.finishWrite(out)
         } catch (t: Throwable) {
             file.failWrite(out)
@@ -273,6 +296,9 @@ class CredentialStore private constructor(private val dir: File) {
 
     companion object {
         private const val FILE_NAME = "passkeys.json"
+
+        /** Bump when a change to the file or its entries needs a migration in [read]. */
+        private const val SCHEMA_VERSION = 1
 
         /** No registration ceremony takes anywhere near this long. */
         const val ORPHAN_MIN_AGE_MILLIS = 60 * 60 * 1000L

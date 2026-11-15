@@ -232,7 +232,8 @@ private fun HwbpScreen() {
                     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
-                                "The passkey list (passkeys.json) is corrupt. HWBP won't create, use, delete " +
+                                "The passkey list (passkeys.json) is corrupt or from a newer version of HWBP. " +
+                                    "HWBP won't create, use, delete " +
                                     "or clean up passkeys until it's reset. The keys in StrongBox are untouched.",
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                             )
