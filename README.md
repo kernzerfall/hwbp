@@ -121,18 +121,19 @@ R8 keep rules ([`app/proguard-rules.pro`](app/proguard-rules.pro)) preserve the 
 
 ## Why
 
-Android has no built-in device-bound passkey provider. Google Password Manager, the default, syncs
-passkeys to the user's Google account by default. They are end-to-end encrypted, but they end up
-on every device signed in to that account. Third-party password managers keep passkeys in their
-own encrypted vaults or files. None we checked (Bitwarden, KeePassDX) uses StrongBox or binds
-passkeys to the device in any way. Chrome appears to create device-bound credentials through
-Play Services, but only non-discoverable ones (`residentKey: discouraged`). Discoverable requests
-go to the regular providers.
+Android has no built-in device-bound passkey provider. Google Password Manager, the default
+provider, syncs passkeys to the user's Google account. They are end-to-end encrypted, but they
+end up on every device signed in to that account. Third-party password managers keep passkeys in
+their own encrypted vaults or files; neither of the two we checked (Bitwarden, KeePassDX) uses
+StrongBox or binds passkeys to the device in any way. Chrome appears to create device-bound
+credentials through Play Services, but only non-discoverable ones (`residentKey: discouraged`).
+Discoverable requests go to the regular providers.
 
 Yet device binding was half the point of passkeys: a credential that can't be copied or
 social-engineered out of someone, because using it requires the physical hardware it lives on.
-That is how an EMV bank card, a SIM card or a European eID card (eIDAS) works. Passkeys on YubiKeys and other
-external security keys already have this property. HWBP gives it to passkeys stored on the phone.
+That is how an EMV bank card, a SIM card or a European eID card (eIDAS) works, and passkeys on
+YubiKeys and other external security keys already have this property. HWBP gives it to passkeys
+stored on the phone.
 
 ## License
 
